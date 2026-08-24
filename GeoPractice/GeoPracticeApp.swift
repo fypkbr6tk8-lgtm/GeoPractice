@@ -11,7 +11,11 @@ struct GeoPracticeApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView()
+            if ProductPrototypeGate.isEnabled {
+                ProductPrototypeRootView()
+            } else {
+                RootView()
+            }
         }
         .modelContainer(for: [
             PracticeEvent.self,

@@ -34,6 +34,10 @@
 		A00000000000000000000019 /* PracticeStatistics.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0000000000000000000001C /* PracticeStatistics.swift */; };
 		A0000000000000000000001A /* StatisticsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0000000000000000000001D /* StatisticsView.swift */; };
 		A0000000000000000000001B /* PracticeStatisticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0000000000000000000001E /* PracticeStatisticsTests.swift */; };
+		A0000000000000000000001C /* PrototypeModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0000000000000000000001F /* PrototypeModels.swift */; };
+		A0000000000000000000001D /* PrototypeRootMetronomeViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000020 /* PrototypeRootMetronomeViews.swift */; };
+		A0000000000000000000001E /* PrototypePracticeViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000021 /* PrototypePracticeViews.swift */; };
+		A0000000000000000000001F /* PrototypeStatisticsSettingsViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000022 /* PrototypeStatisticsSettingsViews.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -77,6 +81,10 @@
 		B0000000000000000000001C /* PracticeStatistics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PracticeStatistics.swift; sourceTree = "<group>"; };
 		B0000000000000000000001D /* StatisticsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatisticsView.swift; sourceTree = "<group>"; };
 		B0000000000000000000001E /* PracticeStatisticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PracticeStatisticsTests.swift; sourceTree = "<group>"; };
+		B0000000000000000000001F /* PrototypeModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrototypeModels.swift; sourceTree = "<group>"; };
+		B00000000000000000000020 /* PrototypeRootMetronomeViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrototypeRootMetronomeViews.swift; sourceTree = "<group>"; };
+		B00000000000000000000021 /* PrototypePracticeViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrototypePracticeViews.swift; sourceTree = "<group>"; };
+		B00000000000000000000022 /* PrototypeStatisticsSettingsViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrototypeStatisticsSettingsViews.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -149,6 +157,7 @@
 		C00000000000000000000004 /* Views */ = {
 			isa = PBXGroup;
 			children = (
+				C00000000000000000000007 /* ProductPrototype */,
 				B00000000000000000000005 /* Components.swift */,
 				B00000000000000000000011 /* LiquidControlComponents.swift */,
 				B00000000000000000000006 /* RootView.swift */,
@@ -159,6 +168,17 @@
 				B0000000000000000000001D /* StatisticsView.swift */,
 			);
 			path = Views;
+			sourceTree = "<group>";
+		};
+		C00000000000000000000007 /* ProductPrototype */ = {
+			isa = PBXGroup;
+			children = (
+				B0000000000000000000001F /* PrototypeModels.swift */,
+				B00000000000000000000020 /* PrototypeRootMetronomeViews.swift */,
+				B00000000000000000000021 /* PrototypePracticeViews.swift */,
+				B00000000000000000000022 /* PrototypeStatisticsSettingsViews.swift */,
+			);
+			path = ProductPrototype;
 			sourceTree = "<group>";
 		};
 		C00000000000000000000005 /* GeoPracticeTests */ = {
@@ -308,6 +328,10 @@
 				A00000000000000000000016 /* PracticeGoalViews.swift in Sources */,
 				A00000000000000000000019 /* PracticeStatistics.swift in Sources */,
 				A0000000000000000000001A /* StatisticsView.swift in Sources */,
+				A0000000000000000000001C /* PrototypeModels.swift in Sources */,
+				A0000000000000000000001D /* PrototypeRootMetronomeViews.swift in Sources */,
+				A0000000000000000000001E /* PrototypePracticeViews.swift in Sources */,
+				A0000000000000000000001F /* PrototypeStatisticsSettingsViews.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -451,7 +475,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = XKY44WW2XC;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = GeoPractice/Info.plist;
@@ -480,7 +504,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = XKY44WW2XC;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = GeoPractice/Info.plist;
