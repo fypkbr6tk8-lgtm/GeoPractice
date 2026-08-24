@@ -1,8 +1,11 @@
+import Photos
+import AudioToolbox
 import SwiftUI
+import UIKit
 
 // MARK: - Statistics prototype
 
-/// A UI-only interpretation of the product sketches for statistics and bills.
+/// A UI-only interpretation of the product sketches for statistics and sharing.
 ///
 /// The records below are deliberately local mock data. This view is intended to
 /// validate navigation, filtering vocabulary and information hierarchy before
@@ -13,7 +16,7 @@ struct PrototypeStatisticsView: View {
     @State private var hand: PrototypeStatisticsHand = .left
     @State private var song: String?
     @State private var sort: PrototypeStatisticsSort = .count
-    @State private var isShowingBill = false
+    @State private var isShowingSharePreview = false
 
     private let calendar = Calendar.autoupdatingCurrent
     private let records = PrototypePracticeRecord.samples
@@ -35,7 +38,7 @@ struct PrototypeStatisticsView: View {
                     .frame(maxWidth: 760)
                     .padding(.horizontal, 16)
                     .padding(.top, 10)
-                    .padding(.bottom, 112)
+                    .padding(.bottom, 24)
                     .frame(maxWidth: .infinity)
                 }
                 .scrollIndicators(.hidden)
@@ -45,8 +48,8 @@ struct PrototypeStatisticsView: View {
             .toolbarBackground(GeoTheme.background.opacity(0.94), for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
             .toolbarColorScheme(.dark, for: .navigationBar)
-            .sheet(isPresented: $isShowingBill) {
-                PrototypeBillPreviewView(
+            .sheet(isPresented: $isShowingSharePreview) {
+                PrototypeSharePreviewView(
                     periodTitle: periodTitle,
                     records: filteredRecords
                 )
@@ -98,7 +101,7 @@ struct PrototypeStatisticsView: View {
             }
 
             Button {
-                isShowingBill = true
+                isShowingSharePreview = true
             } label: {
                 PrototypeActionButton(title: "分享", symbol: "square.and.arrow.up")
             }
@@ -108,16 +111,18 @@ struct PrototypeStatisticsView: View {
     }
 
     private var periodPicker: some View {
-        GeoSegmentContainer {
-            ForEach(PrototypeStatisticsPeriod.allCases) { option in
-                GeoSegmentButton(
-                    title: option.title,
-                    symbol: nil,
-                    isActive: period == option
-                ) {
-                    withAnimation(.snappy(duration: 0.20)) {
-                        period = option
-                        anchorDate = .now
+        LiquidControlPanel(contentPadding: 4, cornerRadius: 18) {
+            HStack(spacing: 5) {
+                ForEach(PrototypeStatisticsPeriod.allCases) { option in
+                    GeoSegmentButton(
+                        title: option.title,
+                        symbol: nil,
+                        isActive: period == option
+                    ) {
+                        withAnimation(.snappy(duration: 0.20)) {
+                            period = option
+                            anchorDate = .now
+                        }
                     }
                 }
             }
@@ -169,15 +174,17 @@ struct PrototypeStatisticsView: View {
     }
 
     private var handPicker: some View {
-        GeoSegmentContainer {
-            ForEach(PrototypeStatisticsHand.allCases) { option in
-                GeoSegmentButton(
-                    title: option.title,
-                    symbol: nil,
-                    isActive: hand == option
-                ) {
-                    withAnimation(.snappy(duration: 0.20)) {
-                        hand = option
+        LiquidControlPanel(contentPadding: 4, cornerRadius: 18) {
+            HStack(spacing: 5) {
+                ForEach(PrototypeStatisticsHand.allCases) { option in
+                    GeoSegmentButton(
+                        title: option.title,
+                        symbol: nil,
+                        isActive: hand == option
+                    ) {
+                        withAnimation(.snappy(duration: 0.20)) {
+                            hand = option
+                        }
                     }
                 }
             }
@@ -436,14 +443,7 @@ private struct PrototypeActionButton: View {
         .foregroundStyle(GeoTheme.text)
         .frame(maxWidth: .infinity, minHeight: 46)
         .padding(.horizontal, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 15, style: .continuous)
-                .fill(GeoTheme.panelRaised)
-                .overlay {
-                    RoundedRectangle(cornerRadius: 15, style: .continuous)
-                        .stroke(Color.white.opacity(0.10), lineWidth: 1)
-                }
-        )
+        .prototypeGlassSurface(cornerRadius: 15)
     }
 }
 
@@ -529,27 +529,42 @@ private struct PrototypeTimelineDayCard: View {
     }
 }
 
-// MARK: - Bill preview
+// MARK: - Shareable practice summary
 
-private struct PrototypeBillPreviewView: View {
+/// A social-first image preview. The preview and the exported PNG are built
+/// from the same SwiftUI view so what users approve is exactly what is shared.
+private struct PrototypeSharePreviewView: View {
     @Environment(\.dismiss) private var dismiss
 
     let periodTitle: String
     let records: [PrototypePracticeRecord]
 
+    @State private var renderedImage: UIImage?
+    @State private var saveState: PrototypePhotoSaveState = .idle
+
     var body: some View {
         NavigationStack {
             ZStack {
-                Color(white: 0.025).ignoresSafeArea()
+                GeoBackground()
 
                 ScrollView {
-                    VStack(spacing: 14) {
+                    VStack(spacing: 16) {
                         PrototypeNoticeBanner(
-                            symbol: "doc.text.magnifyingglass",
-                            text: "Mock 账单用于确认信息结构。正式图片或 PDF 导出将在数据口径确认后接入。"
+                            symbol: "photo.on.rectangle.angled",
+                            text: "当前使用 Mock 数据生成分享图片；卡片样式、分享流程与相册保存均可直接体验。"
                         )
 
-                        billPaper
+                        shareCard
+                            .aspectRatio(4 / 5, contentMode: .fit)
+                            .frame(maxWidth: 560)
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel(cardAccessibilityLabel)
+
+                        shareActions
+
+                        if saveState != .idle {
+                            saveFeedback
+                        }
                     }
                     .padding(16)
                     .frame(maxWidth: 720)
@@ -557,88 +572,362 @@ private struct PrototypeBillPreviewView: View {
                 }
                 .scrollIndicators(.hidden)
             }
-            .navigationTitle("账单预览")
+            .navigationTitle("分享练习总结")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("完成") { dismiss() }
                 }
-                ToolbarItem(placement: .topBarTrailing) {
-                    ShareLink(item: shareText) {
-                        Label("分享", systemImage: "square.and.arrow.up")
-                    }
-                }
             }
             .toolbarBackground(GeoTheme.background.opacity(0.96), for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
+            .toolbarColorScheme(.dark, for: .navigationBar)
+            .task {
+                renderShareImageIfNeeded()
+            }
+            .onChange(of: saveState) { _, newState in
+                guard newState != .idle else { return }
+                UIAccessibility.post(
+                    notification: .announcement,
+                    argument: newState.message
+                )
+            }
         }
     }
 
-    private var billPaper: some View {
-        VStack(spacing: 28) {
-            VStack(spacing: 4) {
-                Text("GEOBEAT BILL")
-                    .font(.system(size: 28, weight: .black, design: .rounded))
-                Text(periodTitle)
-                    .font(.headline)
-                Text(Date.now, format: .dateTime.year().month(.twoDigits).day(.twoDigits))
-                    .font(.caption.monospacedDigit())
-            }
+    private var shareCard: some View {
+        PrototypePracticeSummaryCard(periodTitle: periodTitle, records: records)
+    }
 
-            HStack(spacing: 12) {
-                PrototypeBillMetric(title: "练习总次数", value: totalCount.formatted())
-                PrototypeBillMetric(title: "练习总天数", value: activeDayCount.formatted())
-                PrototypeBillMetric(title: "练习时长", value: prototypeDuration(totalDuration))
-            }
+    @ViewBuilder
+    private var shareActions: some View {
+        HStack(spacing: 10) {
+            if let renderedImage {
+                let transferableImage = Image(uiImage: renderedImage)
 
-            VStack(spacing: 0) {
-                HStack {
-                    Text("PRACTICE")
-                    Spacer()
-                    Text("DURATION")
-                        .frame(width: 82, alignment: .trailing)
-                    Text("FREQUENCY")
-                        .frame(width: 82, alignment: .trailing)
+                ShareLink(
+                    item: transferableImage,
+                    subject: Text("GeoBeat 练习总结"),
+                    message: Text("\(periodTitle) · \(totalCount) 次练习"),
+                    preview: SharePreview(
+                        "GeoBeat 练习总结",
+                        image: transferableImage
+                    )
+                ) {
+                    PrototypeShareActionLabel(
+                        title: "分享图片",
+                        symbol: "square.and.arrow.up"
+                    )
                 }
-                .font(.caption.weight(.black))
-                .padding(.bottom, 10)
-
-                Divider().overlay(Color.black.opacity(0.16))
-
-                ForEach(billRows) { row in
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(row.song)
-                                .font(.subheadline.weight(.bold))
-                            Text(row.section)
-                                .font(.caption)
-                                .foregroundStyle(Color.black.opacity(0.62))
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-
-                        Text(prototypeDuration(row.duration))
-                            .frame(width: 82, alignment: .trailing)
-                        Text("×\(row.count)")
-                            .frame(width: 82, alignment: .trailing)
-                    }
-                    .font(.caption.monospacedDigit().weight(.semibold))
-                    .padding(.vertical, 10)
-
-                    Divider().overlay(Color.black.opacity(0.08))
-                }
+                .accessibilityLabel("分享练习总结图片")
+            } else {
+                PrototypeShareActionLabel(
+                    title: "正在生成",
+                    symbol: "hourglass"
+                )
+                .opacity(0.55)
+                .accessibilityLabel("正在生成练习总结图片")
             }
 
-            Spacer(minLength: 80)
-            Text("GEOBEAT")
-                .font(.headline.weight(.black))
+            Button {
+                saveToPhotoLibrary()
+            } label: {
+                PrototypeShareActionLabel(
+                    title: saveState == .saving ? "保存中" : "保存到相册",
+                    symbol: saveState == .saving ? "hourglass" : "square.and.arrow.down"
+                )
+            }
+            .buttonStyle(.plain)
+            .disabled(renderedImage == nil || saveState == .saving)
+            .accessibilityLabel(saveState == .saving ? "正在保存到相册" : "保存练习总结图片到相册")
         }
-        .foregroundStyle(Color.black.opacity(0.88))
-        .padding(24)
-        .frame(maxWidth: 560, minHeight: 700, alignment: .top)
-        .background(Color(white: 0.96), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .accessibilityElement(children: .contain)
+    }
+
+    private var saveFeedback: some View {
+        LiquidControlPanel(contentPadding: 12, cornerRadius: 18) {
+            HStack(spacing: 10) {
+                if saveState == .saving {
+                    ProgressView()
+                        .tint(.white)
+                } else {
+                    Image(systemName: saveState.symbol)
+                        .foregroundStyle(saveState.tint)
+                }
+
+                Text(saveState.message)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(GeoTheme.text)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(saveState.message)
+    }
+
+    private var totalCount: Int {
+        records.reduce(0) { $0 + $1.count }
+    }
+
+    private var totalDuration: TimeInterval {
+        records.reduce(0) { $0 + $1.duration }
+    }
+
+    private var activeDayCount: Int {
+        let calendar = Calendar.autoupdatingCurrent
+        return Set(records.map { calendar.startOfDay(for: $0.date) }).count
+    }
+
+    private var cardAccessibilityLabel: String {
+        "GeoBeat 练习总结，\(periodTitle)，练习 \(totalCount) 次，共 \(activeDayCount) 天，时长 \(prototypeDuration(totalDuration))"
+    }
+
+    @MainActor
+    private func renderShareImageIfNeeded() {
+        guard renderedImage == nil else { return }
+
+        let renderer = ImageRenderer(
+            content: shareCard
+                .frame(width: 1080, height: 1350)
+                .environment(\.colorScheme, .dark)
+        )
+        renderer.scale = 1
+        renderer.isOpaque = true
+
+        if let image = renderer.uiImage {
+            renderedImage = image
+        } else {
+            saveState = .failed("图片生成失败，请稍后重试。")
+        }
+    }
+
+    private func saveToPhotoLibrary() {
+        guard let imageData = renderedImage?.pngData() else {
+            saveState = .failed("图片尚未生成，请稍后重试。")
+            return
+        }
+
+        saveState = .saving
+
+        Task { @MainActor in
+            let authorization = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
+            guard authorization == .authorized || authorization == .limited else {
+                saveState = .permissionDenied
+                return
+            }
+
+            do {
+                try await PHPhotoLibrary.shared().performChanges {
+                    let request = PHAssetCreationRequest.forAsset()
+                    request.addResource(with: .photo, data: imageData, options: nil)
+                }
+                saveState = .saved
+            } catch {
+                saveState = .failed("保存失败：\(error.localizedDescription)")
+            }
+        }
+    }
+}
+
+private struct PrototypePracticeSummaryCard: View {
+    let periodTitle: String
+    let records: [PrototypePracticeRecord]
+
+    private let accent = Color(red: 0.74, green: 0.96, blue: 0.44)
+    private let referenceSize = CGSize(width: 1080, height: 1350)
+
+    var body: some View {
+        GeometryReader { geometry in
+            let scale = min(
+                geometry.size.width / referenceSize.width,
+                geometry.size.height / referenceSize.height
+            )
+
+            artwork
+                .frame(width: referenceSize.width, height: referenceSize.height)
+                .scaleEffect(scale, anchor: .topLeading)
+                .frame(
+                    width: geometry.size.width,
+                    height: geometry.size.height,
+                    alignment: .topLeading
+                )
+        }
+        .aspectRatio(4 / 5, contentMode: .fit)
+    }
+
+    private var artwork: some View {
+        ZStack {
+            LinearGradient(
+                colors: [
+                    Color(red: 0.035, green: 0.045, blue: 0.075),
+                    Color(red: 0.02, green: 0.025, blue: 0.045),
+                    Color.black
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+
+            visualTexture
+
+            VStack(alignment: .leading, spacing: 0) {
+                brandHeader
+                Spacer(minLength: 24)
+                titleBlock
+                Spacer(minLength: 30)
+                metrics
+                Spacer(minLength: 28)
+                practiceHighlight
+                Spacer(minLength: 22)
+                handBreakdown
+                Spacer(minLength: 24)
+                footer
+            }
+            .padding(64)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 54, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .stroke(Color.white.opacity(0.20), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 54, style: .continuous)
+                .stroke(Color.white.opacity(0.18), lineWidth: 2)
+        }
+        .foregroundStyle(Color.white)
+    }
+
+    private var visualTexture: some View {
+        ZStack {
+            PrototypeSharePolygon(sides: max(3, min(9, activeDayCount + 2)))
+                .stroke(accent.opacity(0.18), lineWidth: 3)
+                .frame(width: 520, height: 520)
+                .rotationEffect(.degrees(-16))
+                .offset(x: 365, y: -345)
+
+            PrototypeSharePolygon(sides: 7)
+                .stroke(Color.white.opacity(0.055), lineWidth: 2)
+                .frame(width: 660, height: 660)
+                .rotationEffect(.degrees(12))
+                .offset(x: -390, y: 500)
+
+            Circle()
+                .fill(accent.opacity(0.10))
+                .frame(width: 420, height: 420)
+                .blur(radius: 80)
+                .offset(x: 470, y: 510)
+        }
+        .accessibilityHidden(true)
+    }
+
+    private var brandHeader: some View {
+        HStack(spacing: 18) {
+            ZStack {
+                Circle()
+                    .fill(accent)
+                Image(systemName: "metronome.fill")
+                    .font(.system(size: 34, weight: .black))
+                    .foregroundStyle(Color.black.opacity(0.86))
+            }
+            .frame(width: 68, height: 68)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text("GEOBEAT")
+                    .font(.system(size: 34, weight: .black, design: .rounded))
+                    .tracking(2)
+                Text("让每次练习都有回声")
+                    .font(.system(size: 19, weight: .semibold, design: .rounded))
+                    .foregroundStyle(Color.white.opacity(0.58))
+            }
+
+            Spacer()
+
+            Text(Date.now, format: .dateTime.year().month(.twoDigits).day(.twoDigits))
+                .font(.system(size: 18, weight: .bold, design: .monospaced))
+                .foregroundStyle(Color.white.opacity(0.66))
+        }
+    }
+
+    private var titleBlock: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("练习总结")
+                .font(.system(size: 70, weight: .black, design: .rounded))
+                .tracking(-2)
+
+            Text(periodTitle)
+                .font(.system(size: 25, weight: .bold, design: .rounded))
+                .foregroundStyle(accent)
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+        }
+    }
+
+    private var metrics: some View {
+        HStack(spacing: 14) {
+            PrototypeShareMetric(title: "完成次数", value: totalCount.formatted(), suffix: "次")
+            PrototypeShareMetric(title: "练习天数", value: activeDayCount.formatted(), suffix: "天")
+            PrototypeShareMetric(title: "投入时长", value: compactDuration(totalDuration), suffix: "")
+        }
+    }
+
+    private var practiceHighlight: some View {
+        HStack(spacing: 24) {
+            ZStack {
+                PrototypeSharePolygon(sides: 6)
+                    .fill(accent.opacity(0.14))
+                PrototypeSharePolygon(sides: 6)
+                    .stroke(accent.opacity(0.72), lineWidth: 3)
+                Text("×\(topSong?.count ?? 0)")
+                    .font(.system(size: 32, weight: .black, design: .rounded))
+                    .foregroundStyle(accent)
+                    .monospacedDigit()
+            }
+            .frame(width: 142, height: 142)
+
+            VStack(alignment: .leading, spacing: 9) {
+                Text("本期最常练习")
+                    .font(.system(size: 20, weight: .bold, design: .rounded))
+                    .foregroundStyle(Color.white.opacity(0.55))
+                Text(topSong?.name ?? "等待第一次练习")
+                    .font(.system(size: 36, weight: .black, design: .rounded))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.68)
+                Text(topSong.map { "累计 \(compactDuration($0.duration))" } ?? "从今天开始留下记录")
+                    .font(.system(size: 20, weight: .semibold, design: .rounded))
+                    .foregroundStyle(Color.white.opacity(0.68))
+            }
+        }
+        .padding(28)
+        .background(Color.white.opacity(0.075), in: RoundedRectangle(cornerRadius: 34, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 34, style: .continuous)
+                .stroke(Color.white.opacity(0.12), lineWidth: 2)
+        }
+    }
+
+    private var handBreakdown: some View {
+        HStack(spacing: 12) {
+            ForEach(PrototypeStatisticsHand.allCases) { hand in
+                VStack(spacing: 6) {
+                    Text(hand.title)
+                        .font(.system(size: 18, weight: .bold, design: .rounded))
+                        .foregroundStyle(Color.white.opacity(0.55))
+                    Text("\(count(for: hand)) 次")
+                        .font(.system(size: 26, weight: .black, design: .rounded))
+                        .monospacedDigit()
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 18)
+                .background(Color.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+            }
+        }
+    }
+
+    private var footer: some View {
+        HStack {
+            Label("持续练习，听见变化", systemImage: "waveform.path")
+                .font(.system(size: 20, weight: .bold, design: .rounded))
+                .foregroundStyle(Color.white.opacity(0.72))
+            Spacer()
+            Text("GEOBEAT")
+                .font(.system(size: 17, weight: .black, design: .rounded))
+                .tracking(1.5)
+                .foregroundStyle(accent.opacity(0.82))
         }
     }
 
@@ -655,49 +944,157 @@ private struct PrototypeBillPreviewView: View {
         return Set(records.map { calendar.startOfDay(for: $0.date) }).count
     }
 
-    private var billRows: [PrototypeBillRow] {
-        Dictionary(grouping: records) { "\($0.song)|\($0.section)" }
-            .compactMap { _, values in
-                guard let first = values.first else { return nil }
-                return PrototypeBillRow(
-                    song: first.song,
-                    section: first.section,
-                    duration: values.reduce(0) { $0 + $1.duration },
-                    count: values.reduce(0) { $0 + $1.count }
+    private var topSong: PrototypeShareSongHighlight? {
+        Dictionary(grouping: records, by: \.song)
+            .map { name, values in
+                PrototypeShareSongHighlight(
+                    name: name,
+                    count: values.reduce(0) { $0 + $1.count },
+                    duration: values.reduce(0) { $0 + $1.duration }
                 )
             }
-            .sorted { $0.song == $1.song ? $0.section < $1.section : $0.song < $1.song }
+            .max { lhs, rhs in lhs.count < rhs.count }
     }
 
-    private var shareText: String {
-        "GEOBEAT BILL · \(periodTitle)\n练习总次数 \(totalCount)\n练习总天数 \(activeDayCount)\n练习时长 \(prototypeDuration(totalDuration))\n\nMock 原型数据"
+    private func count(for hand: PrototypeStatisticsHand) -> Int {
+        records
+            .filter { $0.hand == hand }
+            .reduce(0) { $0 + $1.count }
+    }
+
+    private func compactDuration(_ duration: TimeInterval) -> String {
+        let totalMinutes = max(0, Int(duration) / 60)
+        if totalMinutes >= 60 {
+            return "\(totalMinutes / 60)h \(totalMinutes % 60)m"
+        }
+        return "\(max(1, totalMinutes))m"
     }
 }
 
-private struct PrototypeBillRow: Identifiable {
-    let id = UUID()
-    let song: String
-    let section: String
-    let duration: TimeInterval
-    let count: Int
-}
-
-private struct PrototypeBillMetric: View {
+private struct PrototypeShareMetric: View {
     let title: String
     let value: String
+    let suffix: String
 
     var body: some View {
-        VStack(spacing: 5) {
-            Text(value)
-                .font(.system(.title3, design: .rounded, weight: .black))
-                .monospacedDigit()
-                .lineLimit(1)
-                .minimumScaleFactor(0.60)
+        VStack(alignment: .leading, spacing: 8) {
             Text(title)
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(Color.black.opacity(0.58))
+                .font(.system(size: 18, weight: .bold, design: .rounded))
+                .foregroundStyle(Color.white.opacity(0.52))
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text(value)
+                    .font(.system(size: 39, weight: .black, design: .rounded))
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.60)
+                if !suffix.isEmpty {
+                    Text(suffix)
+                        .font(.system(size: 17, weight: .bold, design: .rounded))
+                        .foregroundStyle(Color.white.opacity(0.46))
+                }
+            }
         }
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(22)
+        .background(Color.white.opacity(0.075), in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .stroke(Color.white.opacity(0.11), lineWidth: 2)
+        }
+    }
+}
+
+private struct PrototypeShareActionLabel: View {
+    let title: String
+    let symbol: String
+
+    var body: some View {
+        Label(title, systemImage: symbol)
+            .font(.subheadline.weight(.bold))
+            .foregroundStyle(GeoTheme.text)
+            .frame(maxWidth: .infinity, minHeight: 52)
+            .padding(.horizontal, 12)
+            .contentShape(Rectangle())
+            .prototypeGlassSurface(cornerRadius: 18, emphasized: true)
+    }
+}
+
+private struct PrototypeSharePolygon: Shape {
+    let sides: Int
+
+    func path(in rect: CGRect) -> Path {
+        let count = max(3, sides)
+        let center = CGPoint(x: rect.midX, y: rect.midY)
+        let radius = min(rect.width, rect.height) / 2
+        var path = Path()
+
+        for index in 0..<count {
+            let angle = (Double(index) / Double(count)) * Double.pi * 2 - Double.pi / 2
+            let point = CGPoint(
+                x: center.x + CGFloat(cos(angle)) * radius,
+                y: center.y + CGFloat(sin(angle)) * radius
+            )
+            if index == 0 {
+                path.move(to: point)
+            } else {
+                path.addLine(to: point)
+            }
+        }
+        path.closeSubpath()
+        return path
+    }
+}
+
+private struct PrototypeShareSongHighlight {
+    let name: String
+    let count: Int
+    let duration: TimeInterval
+}
+
+private enum PrototypePhotoSaveState: Equatable {
+    case idle
+    case saving
+    case saved
+    case permissionDenied
+    case failed(String)
+
+    var message: String {
+        switch self {
+        case .idle:
+            return ""
+        case .saving:
+            return "正在保存练习总结图片…"
+        case .saved:
+            return "已保存到相册，可以直接从照片中分享。"
+        case .permissionDenied:
+            return "没有相册添加权限，请在系统设置中允许 GeoBeat 添加照片。"
+        case .failed(let message):
+            return message
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .saved:
+            return "checkmark.circle.fill"
+        case .permissionDenied:
+            return "lock.trianglebadge.exclamationmark.fill"
+        case .failed:
+            return "exclamationmark.triangle.fill"
+        case .idle, .saving:
+            return "hourglass"
+        }
+    }
+
+    var tint: Color {
+        switch self {
+        case .saved:
+            return .green
+        case .permissionDenied, .failed:
+            return .orange
+        case .idle, .saving:
+            return GeoTheme.muted
+        }
     }
 }
 
@@ -783,59 +1180,80 @@ struct PrototypeSettingsView: View {
         NavigationLink {
             PrototypeProView()
         } label: {
-            GeoCard(cornerRadius: 24) {
-                HStack(spacing: 15) {
-                    Image(systemName: "sparkles.rectangle.stack.fill")
-                        .font(.system(size: 32, weight: .semibold))
-                        .foregroundStyle(GeoTheme.text)
-                        .frame(width: 48, height: 48)
-                        .background(Color.white.opacity(0.09), in: RoundedRectangle(cornerRadius: 14))
+            HStack(spacing: 15) {
+                Image(systemName: "sparkles.rectangle.stack.fill")
+                    .font(.system(size: 32, weight: .semibold))
+                    .foregroundStyle(GeoTheme.text)
+                    .frame(width: 48, height: 48)
+                    .prototypeGlassSurface(cornerRadius: 14, emphasized: true)
 
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("GeoBeat PRO")
-                            .font(.title3.weight(.black))
-                            .foregroundStyle(GeoTheme.text)
-                        Text("PRO 账户卡片与专属购买页")
-                            .font(.caption)
-                            .foregroundStyle(GeoTheme.muted)
-                    }
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.caption.weight(.bold))
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("GeoBeat PRO")
+                        .font(.title3.weight(.black))
+                        .foregroundStyle(GeoTheme.text)
+                    Text("PRO 账户卡片与专属购买页")
+                        .font(.caption)
                         .foregroundStyle(GeoTheme.muted)
                 }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(GeoTheme.muted)
             }
+            .padding(20)
+            .prototypeGlassSurface(cornerRadius: 24)
         }
         .buttonStyle(.plain)
     }
 
     private var metronomeCard: some View {
         PrototypeSettingsCard(title: "设置默认节拍器参数", symbol: "metronome") {
-            NavigationLink {
-                PrototypeMetronomeDefaultsView(
-                    bpm: $defaultBPM,
-                    beats: $defaultBeats,
-                    sound: $sound,
-                    backgroundPlayback: $backgroundPlayback
-                )
-            } label: {
-                LazyVGrid(
-                    columns: [GridItem(.flexible()), GridItem(.flexible())],
-                    spacing: 10
-                ) {
-                    PrototypeSettingTile(title: "默认 BPM", value: "\(defaultBPM)", symbol: "speedometer")
-                    PrototypeSettingTile(title: "默认拍数", value: "\(defaultBeats)", symbol: "music.note")
-                    PrototypeSettingTile(title: "节拍音色", value: sound, symbol: "speaker.wave.2")
-                    PrototypeSettingTile(title: "后台运行", value: backgroundPlayback ? "开启" : "关闭", symbol: "waveform")
+            PrototypeGlassSliderRow(
+                title: "默认 BPM",
+                symbol: "speedometer",
+                value: $defaultBPM,
+                range: 30...240,
+                unit: "BPM"
+            )
+
+            PrototypeGlassSliderRow(
+                title: "默认拍数",
+                symbol: "music.note",
+                value: $defaultBeats,
+                range: 3...9,
+                unit: "拍"
+            )
+
+            HStack(spacing: 10) {
+                PrototypeSoundMenu(selection: $sound)
+
+                Button {
+                    PrototypeMetronomeSound.preview(named: sound)
+                } label: {
+                    Image(systemName: "play.fill")
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(GeoTheme.text)
+                        .frame(width: 52, height: 58)
+                        .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                 }
-                .overlay(alignment: .topTrailing) {
-                    Image(systemName: "chevron.right")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(GeoTheme.muted)
-                        .padding(11)
-                }
+                .buttonStyle(LiquidPressButtonStyle())
+                .prototypeGlassSurface(cornerRadius: 18, emphasized: true)
+                .accessibilityLabel("试听当前节拍音色")
+                .accessibilityValue(sound)
             }
-            .buttonStyle(.plain)
+
+            Toggle(isOn: $backgroundPlayback) {
+                PrototypeSettingsRowLabel(
+                    title: "后台运行",
+                    detail: backgroundPlayback ? "允许锁屏后继续播放" : "离开应用后停止",
+                    symbol: "waveform"
+                )
+            }
+            .tint(Color.white.opacity(0.88))
+            .padding(.horizontal, 14)
+            .frame(minHeight: 58)
+            .prototypeGlassSurface(cornerRadius: 18)
+            .accessibilityHint("双击切换节拍器是否允许在后台继续播放")
         }
     }
 
@@ -973,11 +1391,7 @@ struct PrototypeSettingsView: View {
                 .font(.subheadline.weight(.bold))
                 .foregroundStyle(GeoTheme.text)
                 .frame(maxWidth: .infinity, minHeight: 50)
-                .background(GeoTheme.panelRaised, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .stroke(Color.white.opacity(0.10), lineWidth: 1)
-                }
+                .prototypeGlassSurface(cornerRadius: 16)
         }
         .buttonStyle(.plain)
     }
@@ -1034,42 +1448,136 @@ private struct PrototypeSettingsCard<Content: View>: View {
     @ViewBuilder let content: Content
 
     var body: some View {
-        GeoCard(cornerRadius: 22) {
-            VStack(alignment: .leading, spacing: 14) {
-                Label(title, systemImage: symbol)
-                    .font(.headline.weight(.bold))
-                    .foregroundStyle(GeoTheme.text)
-                content
-            }
+        VStack(alignment: .leading, spacing: 14) {
+            Label(title, systemImage: symbol)
+                .font(.headline.weight(.bold))
+                .foregroundStyle(GeoTheme.text)
+            content
         }
+        .padding(20)
+        .prototypeGlassSurface(cornerRadius: 22)
     }
 }
 
-private struct PrototypeSettingTile: View {
+private struct PrototypeGlassSliderRow: View {
     let title: String
-    let value: String
     let symbol: String
+    @Binding var value: Int
+    let range: ClosedRange<Int>
+    let unit: String
+
+    private var sliderValue: Binding<Double> {
+        Binding(
+            get: { Double(value) },
+            set: {
+                value = min(max(Int($0.rounded()), range.lowerBound), range.upperBound)
+            }
+        )
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Image(systemName: symbol)
-                .foregroundStyle(GeoTheme.muted)
-            Text(value)
-                .font(.headline.weight(.bold))
-                .foregroundStyle(GeoTheme.text)
-                .lineLimit(1)
-                .minimumScaleFactor(0.64)
-            Text(title)
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(GeoTheme.muted)
+        VStack(spacing: 9) {
+            HStack(spacing: 10) {
+                Label(title, systemImage: symbol)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(GeoTheme.text)
+                Spacer(minLength: 8)
+                Text("\(value) \(unit)")
+                    .font(.system(.subheadline, design: .rounded, weight: .black))
+                    .monospacedDigit()
+                    .foregroundStyle(GeoTheme.text)
+            }
+
+            Slider(
+                value: sliderValue,
+                in: Double(range.lowerBound)...Double(range.upperBound),
+                step: 1
+            )
+            .tint(Color.white.opacity(0.90))
+            .accessibilityLabel(title)
+            .accessibilityValue("\(value) \(unit)")
+            .accessibilityHint("上下轻扫调整数值")
         }
-        .frame(maxWidth: .infinity, minHeight: 82, alignment: .leading)
-        .padding(12)
-        .background(Color.black.opacity(0.26), in: RoundedRectangle(cornerRadius: 15, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 15, style: .continuous)
-                .stroke(Color.white.opacity(0.07), lineWidth: 1)
+        .padding(.horizontal, 15)
+        .padding(.vertical, 12)
+        .prototypeGlassSurface(cornerRadius: 18)
+    }
+}
+
+private struct PrototypeSoundMenu: View {
+    @Binding var selection: String
+
+    var body: some View {
+        Menu {
+            ForEach(PrototypeMetronomeSound.allCases) { option in
+                Button {
+                    selection = option.rawValue
+                    option.preview()
+                } label: {
+                    Label(
+                        option.rawValue,
+                        systemImage: selection == option.rawValue
+                            ? "checkmark.circle.fill"
+                            : "speaker.wave.2"
+                    )
+                }
+            }
+        } label: {
+            HStack(spacing: 11) {
+                Image(systemName: "speaker.wave.2")
+                    .foregroundStyle(GeoTheme.muted)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("节拍音色")
+                        .font(.caption)
+                        .foregroundStyle(GeoTheme.muted)
+                    Text(selection)
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(GeoTheme.text)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.72)
+                }
+                Spacer(minLength: 5)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(GeoTheme.muted)
+            }
+            .padding(.horizontal, 15)
+            .frame(maxWidth: .infinity, minHeight: 58)
+            .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         }
+        .buttonStyle(LiquidPressButtonStyle())
+        .prototypeGlassSurface(cornerRadius: 18)
+        .accessibilityLabel("节拍音色")
+        .accessibilityValue(selection)
+        .accessibilityHint("打开菜单；选择音色时会播放一次短促试听音")
+    }
+}
+
+private enum PrototypeMetronomeSound: String, CaseIterable, Identifiable {
+    case penetratingWoodblock = "高穿透木鱼"
+    case classicClick = "经典节拍"
+    case electronicPulse = "电子脉冲"
+    case softBlock = "柔和木块"
+
+    var id: Self { self }
+
+    /// Short, non-looping system sounds keep this UI prototype isolated from
+    /// the real metronome engine and finish by themselves after each preview.
+    private var systemSoundID: SystemSoundID {
+        switch self {
+        case .penetratingWoodblock: 1_104
+        case .classicClick: 1_105
+        case .electronicPulse: 1_113
+        case .softBlock: 1_306
+        }
+    }
+
+    func preview() {
+        AudioServicesPlaySystemSound(systemSoundID)
+    }
+
+    static func preview(named name: String) {
+        (Self(rawValue: name) ?? .penetratingWoodblock).preview()
     }
 }
 
@@ -1140,11 +1648,7 @@ private struct PrototypeNoticeBanner: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(14)
-        .background(Color.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(Color.white.opacity(0.08), lineWidth: 1)
-        }
+        .prototypeGlassSurface(cornerRadius: 16)
     }
 }
 
@@ -1162,14 +1666,14 @@ private struct PrototypeProView: View {
                         .font(.system(size: 64, weight: .semibold))
                     Text("GeoBeat PRO")
                         .font(.largeTitle.weight(.black))
-                    Text("更完整的练习档案、账单导出、基准音与跨设备同步。此页目前仅用于确认入口和购买说明层级。")
+                    Text("更完整的练习档案、练习总结分享、基准音与跨设备同步。此页目前仅用于确认入口和购买说明层级。")
                         .font(.body)
                         .foregroundStyle(GeoTheme.muted)
                         .multilineTextAlignment(.center)
 
                     GeoCard(cornerRadius: 22) {
                         VStack(alignment: .leading, spacing: 14) {
-                            Label("完整统计与账单", systemImage: "chart.bar")
+                            Label("完整统计与分享", systemImage: "chart.bar")
                             Label("更多节拍器声音", systemImage: "speaker.wave.3")
                             Label("云端备份与同步", systemImage: "icloud")
                         }
@@ -1196,48 +1700,6 @@ private struct PrototypeProView: View {
             Button("知道了", role: .cancel) {}
         } message: {
             Text("此 Mock 版本不会调用 StoreKit 或产生付款。")
-        }
-    }
-}
-
-private struct PrototypeMetronomeDefaultsView: View {
-    @Binding var bpm: Int
-    @Binding var beats: Int
-    @Binding var sound: String
-    @Binding var backgroundPlayback: Bool
-
-    private let sounds = ["高穿透木鱼", "经典节拍", "电子脉冲", "柔和木块"]
-
-    var body: some View {
-        PrototypeSettingsDestination(title: "默认节拍器参数") {
-            PrototypeSettingsCard(title: "速度与拍号", symbol: "metronome") {
-                Stepper(value: $bpm, in: 30...240) {
-                    PrototypeSettingsRowLabel(title: "默认 BPM", detail: "\(bpm)", symbol: "speedometer")
-                }
-                PrototypeSettingsDivider()
-                Stepper(value: $beats, in: 1...12) {
-                    PrototypeSettingsRowLabel(title: "默认拍数", detail: "每小节 \(beats) 拍", symbol: "music.note")
-                }
-            }
-
-            PrototypeSettingsCard(title: "声音与运行", symbol: "speaker.wave.2") {
-                Picker("节拍音色", selection: $sound) {
-                    ForEach(sounds, id: \.self) { Text($0).tag($0) }
-                }
-                .pickerStyle(.menu)
-                .tint(GeoTheme.text)
-
-                PrototypeSettingsDivider()
-
-                Toggle(isOn: $backgroundPlayback) {
-                    PrototypeSettingsRowLabel(
-                        title: "后台运行",
-                        detail: backgroundPlayback ? "允许锁屏后继续播放" : "离开页面后停止",
-                        symbol: "waveform"
-                    )
-                }
-                .tint(Color.white.opacity(0.88))
-            }
         }
     }
 }

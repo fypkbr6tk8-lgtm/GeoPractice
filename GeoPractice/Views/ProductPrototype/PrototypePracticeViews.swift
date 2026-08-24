@@ -59,7 +59,7 @@ struct PrototypePracticeView: View {
                     .frame(maxWidth: 760)
                     .padding(.horizontal, 16)
                     .padding(.top, 10)
-                    .padding(.bottom, 112)
+                    .padding(.bottom, 24)
                     .frame(maxWidth: .infinity)
                 }
                 .scrollIndicators(.hidden)
@@ -71,9 +71,12 @@ struct PrototypePracticeView: View {
                     Button {
                         withAnimation(.snappy(duration: 0.2)) { showsSearch.toggle() }
                     } label: {
-                        Image(systemName: "magnifyingglass")
-                            .frame(width: 44, height: 44)
+                        GeoGlassCapsule {
+                            Image(systemName: "magnifyingglass")
+                                .frame(width: 44, height: 44)
+                        }
                     }
+                    .buttonStyle(LiquidPressButtonStyle())
                     .accessibilityLabel(showsSearch ? "收起搜索" : "搜索曲目和段落")
                 }
 
@@ -81,17 +84,23 @@ struct PrototypePracticeView: View {
                     Button {
                         showsArchive = true
                     } label: {
-                        Image(systemName: "archivebox")
-                            .frame(width: 44, height: 44)
+                        GeoGlassCapsule {
+                            Image(systemName: "archivebox")
+                                .frame(width: 44, height: 44)
+                        }
                     }
+                    .buttonStyle(LiquidPressButtonStyle())
                     .accessibilityLabel("已归档曲目")
 
                     Button {
                         showsNewSong = true
                     } label: {
-                        Image(systemName: "plus")
-                            .frame(width: 44, height: 44)
+                        GeoGlassCapsule {
+                            Image(systemName: "plus")
+                                .frame(width: 44, height: 44)
+                        }
                     }
+                    .buttonStyle(LiquidPressButtonStyle())
                     .accessibilityLabel("新建曲目")
                 }
             }
@@ -117,11 +126,7 @@ struct PrototypePracticeView: View {
         .font(.caption.weight(.semibold))
         .foregroundStyle(GeoTheme.muted)
         .padding(13)
-        .background(Color.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 16))
-        .overlay {
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(Color.white.opacity(0.09), lineWidth: 1)
-        }
+        .prototypeGlassSurface(cornerRadius: 16)
     }
 
     private var filterStrip: some View {
@@ -137,14 +142,14 @@ struct PrototypePracticeView: View {
                 Button {
                     showsNewSong = true
                 } label: {
-                    Label("新建", systemImage: "plus")
-                        .font(.caption.weight(.bold))
-                        .padding(.horizontal, 14)
-                        .frame(minHeight: 42)
-                        .background(Color.white.opacity(0.06), in: Capsule())
-                        .overlay { Capsule().stroke(Color.white.opacity(0.10)) }
+                    GeoGlassCapsule {
+                        Label("新建", systemImage: "plus")
+                            .font(.caption.weight(.bold))
+                            .padding(.horizontal, 14)
+                            .frame(minHeight: 42)
+                    }
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(LiquidPressButtonStyle())
             }
             .padding(.vertical, 1)
         }
@@ -155,18 +160,19 @@ struct PrototypePracticeView: View {
         Button {
             withAnimation(.snappy(duration: 0.2)) { selectedFilter = filter }
         } label: {
-            Text(title)
-                .font(.caption.weight(.bold))
-                .foregroundStyle(selectedFilter == filter ? .black : GeoTheme.text)
-                .padding(.horizontal, 15)
-                .frame(minHeight: 42)
-                .background(
-                    selectedFilter == filter ? Color.white.opacity(0.92) : Color.white.opacity(0.055),
-                    in: Capsule()
-                )
-                .overlay { Capsule().stroke(Color.white.opacity(0.10)) }
+            GeoGlassCapsule {
+                Text(title)
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(selectedFilter == filter ? .black : GeoTheme.text)
+                    .padding(.horizontal, 15)
+                    .frame(minHeight: 42)
+                    .background(
+                        selectedFilter == filter ? Color.white.opacity(0.92) : .clear,
+                        in: Capsule()
+                    )
+            }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(LiquidPressButtonStyle())
         .accessibilityAddTraits(selectedFilter == filter ? .isSelected : [])
     }
 
@@ -188,8 +194,7 @@ struct PrototypePracticeView: View {
         }
         .padding(.horizontal, 14)
         .frame(minHeight: 48)
-        .background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 16))
-        .overlay { RoundedRectangle(cornerRadius: 16).stroke(Color.white.opacity(0.12)) }
+        .prototypeGlassSurface(cornerRadius: 16)
     }
 
     private var visibleSections: [PrototypeSongSectionItem] {
@@ -702,24 +707,28 @@ private struct PrototypeSongHistoryView: View {
             }
         }
         .padding(4)
-        .background(Color.white.opacity(0.055), in: Capsule())
+        .background { GeoGlassCapsule { Color.clear } }
     }
 
     private var dateControl: some View {
         HStack(spacing: 8) {
             Button { shiftPeriod(-1) } label: {
-                Image(systemName: "chevron.left").frame(width: 40, height: 40)
+                GeoGlassCapsule {
+                    Image(systemName: "chevron.left").frame(width: 40, height: 40)
+                }
             }
-            .buttonStyle(.plain)
+            .buttonStyle(LiquidPressButtonStyle())
             .disabled(period == .all)
             Text(period.rangeTitle(anchor: anchorDate))
                 .font(.caption.monospacedDigit().weight(.bold))
                 .frame(maxWidth: .infinity)
                 .multilineTextAlignment(.center)
             Button { shiftPeriod(1) } label: {
-                Image(systemName: "chevron.right").frame(width: 40, height: 40)
+                GeoGlassCapsule {
+                    Image(systemName: "chevron.right").frame(width: 40, height: 40)
+                }
             }
-            .buttonStyle(.plain)
+            .buttonStyle(LiquidPressButtonStyle())
             .disabled(period == .all)
         }
         .foregroundStyle(GeoTheme.text)
@@ -742,7 +751,7 @@ private struct PrototypeSongHistoryView: View {
             }
         }
         .padding(4)
-        .background(Color.white.opacity(0.055), in: Capsule())
+        .background { GeoGlassCapsule { Color.clear } }
     }
 
     private var filteredRecords: [PrototypeMockRecord] {
@@ -929,8 +938,14 @@ private struct PrototypeArchiveView: View {
                                                 .foregroundStyle(GeoTheme.muted)
                                         }
                                         Spacer()
-                                        Button("恢复") { store.setArchived(song.id, false) }
-                                            .buttonStyle(.bordered)
+                                        Button { store.setArchived(song.id, false) } label: {
+                                            Text("恢复")
+                                                .font(.caption.weight(.bold))
+                                                .padding(.horizontal, 14)
+                                                .frame(minHeight: 40)
+                                                .prototypeGlassSurface(cornerRadius: 13)
+                                        }
+                                        .buttonStyle(LiquidPressButtonStyle())
                                     }
                                 }
                             }
@@ -1306,20 +1321,16 @@ private struct PrototypeDetailMetric: View {
                 .foregroundStyle(GeoTheme.muted)
         }
         .frame(maxWidth: .infinity, minHeight: 58)
-        .background(Color.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 13))
+        .prototypeGlassSurface(cornerRadius: 13)
     }
 }
 
 private extension View {
     func prototypeActionLabel(prominent: Bool = false) -> some View {
         font(.caption.weight(.bold))
-            .foregroundStyle(prominent ? Color.black : GeoTheme.text)
+            .foregroundStyle(GeoTheme.text)
             .frame(maxWidth: .infinity, minHeight: 46)
-            .background(
-                prominent ? Color.white.opacity(0.92) : Color.white.opacity(0.06),
-                in: RoundedRectangle(cornerRadius: 14)
-            )
-            .overlay { RoundedRectangle(cornerRadius: 14).stroke(Color.white.opacity(0.10)) }
+            .prototypeGlassSurface(cornerRadius: 14, emphasized: prominent)
     }
 }
 

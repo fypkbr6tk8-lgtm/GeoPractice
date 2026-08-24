@@ -1,4 +1,92 @@
 import Foundation
+import SwiftUI
+
+/// Shared prototype-only glass treatment. It intentionally mirrors the
+/// floating tab bar: one translucent surface, a restrained highlight and a
+/// clear boundary. Production views continue to use their existing styles.
+struct PrototypeGlassSurfaceModifier: ViewModifier {
+    let cornerRadius: CGFloat
+    let emphasized: Bool
+
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if reduceTransparency {
+            content
+                .background(
+                    emphasized ? Color(white: 0.13) : GeoTheme.panelRaised,
+                    in: shape
+                )
+                .overlay { border }
+        } else {
+#if compiler(>=6.2)
+            if #available(iOS 26.0, *) {
+                content
+                    .background(Color.black.opacity(0.14), in: shape)
+                    .glassEffect(
+                        .regular.tint(Color.white.opacity(emphasized ? 0.16 : 0.025)),
+                        in: shape
+                    )
+                    .overlay { border }
+            } else {
+                material(content)
+            }
+#else
+            material(content)
+#endif
+        }
+    }
+
+    private func material(_ content: Content) -> some View {
+        content
+            .background(.ultraThinMaterial, in: shape)
+            .background {
+                shape
+                    .fill(Color.black.opacity(emphasized ? 0.02 : 0.14))
+                    .allowsHitTesting(false)
+            }
+            .overlay {
+                shape
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color.white.opacity(emphasized ? 0.20 : 0.09),
+                                Color.white.opacity(0.015)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .allowsHitTesting(false)
+            }
+            .overlay { border }
+    }
+
+    private var shape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+    }
+
+    private var border: some View {
+        shape
+            .stroke(Color.white.opacity(emphasized ? 0.28 : 0.15), lineWidth: 1)
+            .allowsHitTesting(false)
+    }
+}
+
+extension View {
+    func prototypeGlassSurface(
+        cornerRadius: CGFloat = 16,
+        emphasized: Bool = false
+    ) -> some View {
+        modifier(
+            PrototypeGlassSurfaceModifier(
+                cornerRadius: cornerRadius,
+                emphasized: emphasized
+            )
+        )
+    }
+}
 
 enum ProductPrototypeGate {
     static var isEnabled: Bool {

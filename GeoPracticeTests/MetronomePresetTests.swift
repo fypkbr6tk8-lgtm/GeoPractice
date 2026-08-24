@@ -370,7 +370,7 @@ final class MetronomePresetTests: XCTestCase {
         }
     }
 
-    func testFirstMeasureBuildsGeometryAndKeepsItAcrossCycles() {
+    func testEachMeasureRebuildsGeometryFromTheHorizontalSlot() {
         var lifecycle = BeatVisualLifecycle(beats: 4)
 
         XCTAssertEqual(lifecycle.phase, .origin)
@@ -384,18 +384,21 @@ final class MetronomePresetTests: XCTestCase {
         XCTAssertFalse(lifecycle.hasEstablishedStructure)
 
         for beat in 0..<4 {
-            lifecycle.record(beat: beat, subdivision: 0, cycle: 0, beats: 4)
+            lifecycle.record(beat: beat, subdivision: 0, cycle: 1, beats: 4)
         }
 
         XCTAssertEqual(lifecycle.phase, .orbiting)
         XCTAssertEqual(lifecycle.visibleBeatIndices, [0, 1, 2, 3])
         XCTAssertTrue(lifecycle.hasEstablishedStructure)
 
-        lifecycle.record(beat: 0, subdivision: 0, cycle: 1, beats: 4)
+        lifecycle.record(beat: 0, subdivision: 0, cycle: 2, beats: 4)
+        XCTAssertEqual(lifecycle.visibleEdgeIndices, [0])
+        XCTAssertFalse(lifecycle.hasEstablishedStructure)
+
         lifecycle.record(beat: 2, subdivision: 0, cycle: 100, beats: 4)
 
-        XCTAssertEqual(lifecycle.visibleEdgeIndices, [0, 1, 2, 3])
-        XCTAssertTrue(lifecycle.hasEstablishedStructure)
+        XCTAssertEqual(lifecycle.visibleEdgeIndices, [2, 1, 0])
+        XCTAssertFalse(lifecycle.hasEstablishedStructure)
     }
 
     func testFourBeatEighthNoteProducesEightFixedPulseAddresses() throws {
@@ -1405,16 +1408,16 @@ final class MetronomePresetTests: XCTestCase {
 
     func testBeatVisualLifecycleCanClearOnlyStaleCurrentBeatLocation() {
         var lifecycle = BeatVisualLifecycle(beats: 4)
-        for beat in 0..<4 {
+        for beat in 0..<3 {
             lifecycle.record(beat: beat, subdivision: 0, cycle: 0, beats: 4)
         }
-        lifecycle.record(beat: 2, subdivision: 1, cycle: 1, beats: 4)
+        lifecycle.record(beat: 2, subdivision: 1, cycle: 0, beats: 4)
         XCTAssertEqual(lifecycle.currentBeatIndex, 2)
 
         lifecycle.clearCurrentBeatLocation()
 
         XCTAssertNil(lifecycle.currentBeatIndex)
-        XCTAssertEqual(lifecycle.phase, .orbiting)
+        XCTAssertEqual(lifecycle.phase, .building)
         XCTAssertEqual(lifecycle.visibleBeatIndices, [0, 1, 2, 3])
     }
 

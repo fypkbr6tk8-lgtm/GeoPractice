@@ -10,7 +10,7 @@ struct ProductPrototypeRootView: View {
     @State private var showsCurrentApp = false
 
     var body: some View {
-        ZStack(alignment: .bottom) {
+        ZStack {
             // Keep all three prototype branches mounted. Mock edits, filters and
             // navigation stacks therefore survive tab changes during the same
             // review session even though nothing is persisted across launches.
@@ -31,6 +31,8 @@ struct ProductPrototypeRootView: View {
             )
             .prototypeTabVisibility(selectedTab == .metronome)
 
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
             ProductPrototypeTabBar(selection: $selectedTab)
                 .padding(.horizontal, 20)
                 .padding(.bottom, 8)
@@ -53,10 +55,10 @@ struct ProductPrototypeRootView: View {
                         .font(.system(size: 12, weight: .bold))
                         .padding(.horizontal, 14)
                         .frame(minHeight: 44)
+                        .prototypeGlassSurface(cornerRadius: 16, emphasized: true)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(.white)
-                .foregroundStyle(.black)
+                .buttonStyle(LiquidPressButtonStyle())
+                .foregroundStyle(GeoTheme.text)
                 .padding(.top, 8)
                 .padding(.trailing, 12)
                 .accessibilityHint("关闭当前正式功能并回到 Mock 产品原型")
@@ -149,15 +151,23 @@ private struct PrototypeMetronomeView: View {
                 GeoBackground()
 
                 GeometryReader { proxy in
+                    let isCompactHeight = proxy.size.height < 700
+                    let contentSpacing: CGFloat = isCompactHeight ? 10 : 16
+                    let stageRatio: CGFloat = isCompactHeight ? 0.30 : 0.37
+                    let stageMaximum: CGFloat = isCompactHeight ? 230 : 340
+                    let stageHeight = max(185, min(stageMaximum, proxy.size.height * stageRatio))
+
                     ScrollView {
-                        VStack(spacing: 18) {
+                        VStack(spacing: contentSpacing) {
                             contextHeader
                             PrototypePulseStage(
                                 beats: beats,
                                 bpm: bpm,
+                                trainingNote: trainingNote,
+                                referenceNote: referenceNote,
                                 isPlaying: isPlaying
                             )
-                            .frame(height: max(250, min(430, proxy.size.height * 0.48)))
+                            .frame(height: stageHeight)
                             .contentShape(Rectangle())
                             .onTapGesture {
                                 withAnimation(.snappy(duration: 0.2)) {
@@ -174,8 +184,8 @@ private struct PrototypeMetronomeView: View {
                         }
                         .frame(maxWidth: 720)
                         .padding(.horizontal, 16)
-                        .padding(.top, 8)
-                        .padding(.bottom, 112)
+                        .padding(.top, isCompactHeight ? 2 : 8)
+                        .padding(.bottom, isCompactHeight ? 10 : 24)
                         .frame(maxWidth: .infinity)
                     }
                     .scrollIndicators(.hidden)
@@ -184,9 +194,12 @@ private struct PrototypeMetronomeView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button(action: onOpenSettings) {
-                        Image(systemName: "line.3.horizontal")
-                            .frame(width: 44, height: 44)
+                        GeoGlassCapsule {
+                            Image(systemName: "line.3.horizontal")
+                                .frame(width: 44, height: 44)
+                        }
                     }
+                    .buttonStyle(LiquidPressButtonStyle())
                     .accessibilityLabel("更多设置")
                 }
                 ToolbarItem(placement: .principal) {
@@ -204,9 +217,12 @@ private struct PrototypeMetronomeView: View {
                         isPlaying = false
                         showsSummary = true
                     } label: {
-                        Image(systemName: "checkmark")
-                            .frame(width: 44, height: 44)
+                        GeoGlassCapsule {
+                            Image(systemName: "checkmark")
+                                .frame(width: 44, height: 44)
+                        }
                     }
+                    .buttonStyle(LiquidPressButtonStyle())
                     .accessibilityLabel("练习完毕")
                 }
             }
@@ -314,18 +330,7 @@ private struct PrototypeMetronomeView: View {
             .frame(minHeight: 58)
         }
         .buttonStyle(.plain)
-        .background(
-            LinearGradient(
-                colors: [Color.white.opacity(0.14), Color.white.opacity(0.055)],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            ),
-            in: RoundedRectangle(cornerRadius: 18, style: .continuous)
-        )
-        .overlay {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(Color.white.opacity(0.14), lineWidth: 1)
-        }
+        .prototypeGlassSurface(cornerRadius: 18, emphasized: true)
         .accessibilityLabel("为\(selectedHand.title)记录一次练习，当前\(countDisplay)")
     }
 
@@ -353,10 +358,10 @@ private struct PrototypeMetronomeView: View {
             }
         }
         .padding(4)
-        .background(Color.white.opacity(0.055), in: Capsule(style: .continuous))
-        .overlay {
-            Capsule(style: .continuous)
-                .stroke(Color.white.opacity(0.10), lineWidth: 1)
+        .background {
+            GeoGlassCapsule {
+                Color.clear
+            }
         }
     }
 
@@ -398,61 +403,120 @@ private struct PrototypeMetronomeView: View {
 private struct PrototypePulseStage: View {
     let beats: Int
     let bpm: Int
+    let trainingNote: String
+    let referenceNote: String?
     let isPlaying: Bool
 
+    @State private var eventPositionAtAnchor = 0.0
+    @State private var eventAnchorDate = Date.now
+
     var body: some View {
-        TimelineView(.animation(paused: !isPlaying)) { timeline in
-            let seconds = timeline.date.timeIntervalSinceReferenceDate
-            let beatDuration = 60.0 / Double(max(30, bpm))
-            let rawPhase = isPlaying ? seconds / beatDuration : 0
-            let beatIndex = Int(rawPhase.rounded(.down)) % max(3, beats)
-            let localPhase = rawPhase - rawPhase.rounded(.down)
+        TimelineView(.animation(minimumInterval: 1 / 60, paused: !isPlaying)) { timeline in
+            let count = min(9, max(3, beats))
+            let pulsesPerBeat = prototypePulsesPerBeat
+            let eventsPerMeasure = count * pulsesPerBeat
+            let eventInterval = prototypeEventInterval(
+                bpm: bpm,
+                pulsesPerBeat: pulsesPerBeat,
+                referenceNote: referenceNote
+            )
+            let elapsedSinceAnchor = isPlaying
+                ? max(0, timeline.date.timeIntervalSince(eventAnchorDate))
+                : 0
+            let rawEvent = max(
+                0,
+                eventPositionAtAnchor + elapsedSinceAnchor / eventInterval
+            )
+            let absoluteEvent = max(0, Int(floor(rawEvent)))
+            let measure = absoluteEvent / eventsPerMeasure
+            let eventInMeasure = absoluteEvent % eventsPerMeasure
+            let beatIndex = eventInMeasure / pulsesPerBeat
+            let subdivision = eventInMeasure % pulsesPerBeat
+            let eventProgress = rawEvent - floor(rawEvent)
 
             Canvas { context, size in
-                let count = max(3, beats)
                 let radius = min(size.width, size.height) * 0.32
                 let center = CGPoint(x: size.width / 2, y: size.height / 2)
-                let points = (0..<count).map { index in
-                    let angle = -Double.pi / 2 + Double(index) / Double(count) * 2 * Double.pi
-                    return CGPoint(
-                        x: center.x + cos(angle) * radius,
-                        y: center.y + sin(angle) * radius
+                let halfInteriorAngle = Double.pi / Double(count)
+                let apothem = radius * CGFloat(cos(halfInteriorAngle))
+                let halfEdge = radius * CGFloat(sin(halfInteriorAngle))
+                let baselineY = center.y + apothem
+                let step = CGFloat.pi * 2 / CGFloat(count)
+                let transition = smoothStep(min(1, eventProgress / 0.56))
+                let isBeatBoundary = subdivision == 0
+
+                if isBeatBoundary, beatIndex > 0, transition < 1 {
+                    for oldSlot in 0..<beatIndex {
+                        drawPrototypeEdge(
+                            slot: CGFloat(oldSlot) + transition,
+                            center: center,
+                            baselineY: baselineY,
+                            halfEdge: halfEdge,
+                            step: step,
+                            opacity: 0.38,
+                            progress: 1,
+                            in: &context
+                        )
+                    }
+                    drawPrototypeEdge(
+                        slot: 0,
+                        center: center,
+                        baselineY: baselineY,
+                        halfEdge: halfEdge,
+                        step: step,
+                        opacity: 0.76,
+                        progress: transition,
+                        in: &context
                     )
+                } else {
+                    let creationProgress: CGFloat = isPlaying
+                        && measure > 0
+                        && beatIndex == 0
+                        && subdivision == 0
+                        ? transition
+                        : 1
+                    for slot in 0...beatIndex {
+                        drawPrototypeEdge(
+                            slot: CGFloat(slot),
+                            center: center,
+                            baselineY: baselineY,
+                            halfEdge: halfEdge,
+                            step: step,
+                            opacity: slot == 0 ? 0.76 : 0.38,
+                            progress: slot == 0 ? creationProgress : 1,
+                            in: &context
+                        )
+                    }
                 }
 
-                var polygon = Path()
-                polygon.move(to: points[0])
-                for point in points.dropFirst() { polygon.addLine(to: point) }
-                polygon.closeSubpath()
-                context.stroke(
-                    polygon,
-                    with: .color(.white.opacity(0.26)),
-                    style: StrokeStyle(lineWidth: 2, lineJoin: .round)
+                let normalizedHeight: Double
+                if let target = BeatBounceMotionModel.nextTarget(
+                    afterBeat: beatIndex,
+                    subdivision: subdivision,
+                    beats: count,
+                    pulsesPerBeat: pulsesPerBeat,
+                    strongBeatIndices: [0],
+                    secondaryAccentIndices: count == 4 ? [2] : []
+                ) {
+                    normalizedHeight = BeatBounceMotionModel.normalizedEventHeight(
+                        eventProgress: eventProgress,
+                        toward: target.heightTier,
+                        startsFromOrigin: absoluteEvent == 0
+                    )
+                } else {
+                    normalizedHeight = 0
+                }
+                let pulse = 6.4 + CGFloat(normalizedHeight) * 1.8
+                let inwardOffset = BeatBounceContactGeometry.inwardOffset(
+                    edgeToCenterDistance: Double(apothem),
+                    ballRadius: Double(pulse),
+                    edgeStrokeWidth: 2,
+                    normalizedHeight: normalizedHeight
                 )
-
-                for (index, point) in points.enumerated() {
-                    let active = index == beatIndex
-                    let anchorRadius: CGFloat = active ? 7 : 4
-                    let rect = CGRect(
-                        x: point.x - anchorRadius,
-                        y: point.y - anchorRadius,
-                        width: anchorRadius * 2,
-                        height: anchorRadius * 2
-                    )
-                    context.fill(
-                        Path(ellipseIn: rect),
-                        with: .color(.white.opacity(active ? 0.95 : 0.34))
-                    )
-                }
-
-                let nextIndex = (beatIndex + 1) % count
-                let start = points[beatIndex]
-                let end = points[nextIndex]
                 let position = CGPoint(
-                    x: start.x + (end.x - start.x) * localPhase,
-                    y: start.y + (end.y - start.y) * localPhase
+                    x: center.x,
+                    y: baselineY - CGFloat(inwardOffset)
                 )
-                let pulse = 8 + CGFloat(sin(localPhase * Double.pi)) * 2
                 context.fill(
                     Path(ellipseIn: CGRect(
                         x: position.x - pulse,
@@ -464,6 +528,43 @@ private struct PrototypePulseStage: View {
                 )
             }
         }
+        .onAppear {
+            eventAnchorDate = .now
+        }
+        .onChange(of: isPlaying) { wasPlaying, nowPlaying in
+            let now = Date.now
+            if wasPlaying {
+                freezePrototypePosition(
+                    at: now,
+                    bpm: bpm,
+                    pulsesPerBeat: prototypePulsesPerBeat,
+                    referenceNote: referenceNote
+                )
+            }
+            if nowPlaying {
+                eventAnchorDate = now
+            }
+        }
+        .onChange(of: bpm) { previousBPM, _ in
+            guard isPlaying else { return }
+            freezePrototypePosition(
+                at: .now,
+                bpm: previousBPM,
+                pulsesPerBeat: prototypePulsesPerBeat,
+                referenceNote: referenceNote
+            )
+        }
+        .onChange(of: referenceNote) { previousReference, _ in
+            guard isPlaying else { return }
+            freezePrototypePosition(
+                at: .now,
+                bpm: bpm,
+                pulsesPerBeat: prototypePulsesPerBeat,
+                referenceNote: previousReference
+            )
+        }
+        .onChange(of: beats) { _, _ in resetPrototypeClock() }
+        .onChange(of: trainingNote) { _, _ in resetPrototypeClock() }
         .background(
             RadialGradient(
                 colors: [Color.white.opacity(isPlaying ? 0.075 : 0.035), .clear],
@@ -472,6 +573,113 @@ private struct PrototypePulseStage: View {
                 endRadius: 220
             )
         )
+    }
+
+    private var prototypePulsesPerBeat: Int {
+        if trainingNote.contains("十六") { return 4 }
+        if trainingNote.contains("八") { return 2 }
+        return 1
+    }
+
+    private func resetPrototypeClock() {
+        eventPositionAtAnchor = 0
+        eventAnchorDate = .now
+    }
+
+    private func freezePrototypePosition(
+        at date: Date,
+        bpm: Int,
+        pulsesPerBeat: Int,
+        referenceNote: String?
+    ) {
+        let interval = prototypeEventInterval(
+            bpm: bpm,
+            pulsesPerBeat: pulsesPerBeat,
+            referenceNote: referenceNote
+        )
+        eventPositionAtAnchor += max(0, date.timeIntervalSince(eventAnchorDate)) / interval
+        eventAnchorDate = date
+    }
+
+    private func prototypeEventInterval(
+        bpm: Int,
+        pulsesPerBeat: Int,
+        referenceNote: String?
+    ) -> TimeInterval {
+        let referenceDensity: Double
+        if referenceNote?.contains("二分") == true {
+            referenceDensity = 0.5
+        } else if referenceNote?.contains("八分") == true {
+            referenceDensity = 2
+        } else {
+            referenceDensity = 1
+        }
+        return 60 / Double(max(30, bpm))
+            * referenceDensity / Double(max(1, pulsesPerBeat))
+    }
+
+    private func drawPrototypeEdge(
+        slot: CGFloat,
+        center: CGPoint,
+        baselineY: CGFloat,
+        halfEdge: CGFloat,
+        step: CGFloat,
+        opacity: Double,
+        progress: CGFloat,
+        in context: inout GraphicsContext
+    ) {
+        let midpoint = CGPoint(x: center.x, y: baselineY)
+        let unrotatedStart = CGPoint(x: center.x - halfEdge, y: baselineY)
+        let unrotatedEnd = CGPoint(x: center.x + halfEdge, y: baselineY)
+        let start = rotate(unrotatedStart, around: center, angle: slot * step)
+        let fullEnd = rotate(unrotatedEnd, around: center, angle: slot * step)
+        let rotatedMidpoint = rotate(midpoint, around: center, angle: slot * step)
+        let clampedProgress = min(1, max(0, progress))
+        let drawnStart = interpolate(
+            from: rotatedMidpoint,
+            to: start,
+            progress: clampedProgress
+        )
+        let drawnEnd = interpolate(
+            from: rotatedMidpoint,
+            to: fullEnd,
+            progress: clampedProgress
+        )
+        guard clampedProgress > 0.001 else { return }
+
+        var path = Path()
+        path.move(to: drawnStart)
+        path.addLine(to: drawnEnd)
+        context.stroke(
+            path,
+            with: .color(.white.opacity(opacity)),
+            style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round)
+        )
+    }
+
+    private func rotate(_ point: CGPoint, around center: CGPoint, angle: CGFloat) -> CGPoint {
+        let dx = point.x - center.x
+        let dy = point.y - center.y
+        return CGPoint(
+            x: center.x + dx * cos(angle) - dy * sin(angle),
+            y: center.y + dx * sin(angle) + dy * cos(angle)
+        )
+    }
+
+    private func interpolate(
+        from start: CGPoint,
+        to end: CGPoint,
+        progress: CGFloat
+    ) -> CGPoint {
+        CGPoint(
+            x: start.x + (end.x - start.x) * progress,
+            y: start.y + (end.y - start.y) * progress
+        )
+    }
+
+    private func smoothStep(_ value: Double) -> CGFloat {
+        let clamped = min(1, max(0, value))
+        return CGFloat(clamped * clamped * (3 - 2 * clamped))
     }
 }
 
@@ -497,11 +705,7 @@ private struct PrototypeParameterMenu<MenuContent: View>: View {
             }
             .frame(maxWidth: .infinity, minHeight: 58)
             .padding(.horizontal, 7)
-            .background(Color.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 14))
-            .overlay {
-                RoundedRectangle(cornerRadius: 14)
-                    .stroke(Color.white.opacity(0.10), lineWidth: 1)
-            }
+            .prototypeGlassSurface(cornerRadius: 14)
         }
     }
 }
@@ -519,6 +723,7 @@ private struct PrototypeTempoTile: View {
                 Button { bpm = max(30, bpm - 1) } label: {
                     Image(systemName: "minus")
                         .frame(width: 24, height: 36)
+                        .background(.thinMaterial, in: Capsule())
                 }
                 Text("\(bpm)")
                     .font(.system(size: 16, weight: .black, design: .rounded))
@@ -527,17 +732,14 @@ private struct PrototypeTempoTile: View {
                 Button { bpm = min(240, bpm + 1) } label: {
                     Image(systemName: "plus")
                         .frame(width: 24, height: 36)
+                        .background(.thinMaterial, in: Capsule())
                 }
             }
             .buttonStyle(.plain)
         }
         .frame(maxWidth: .infinity, minHeight: 58)
         .padding(.horizontal, 5)
-        .background(Color.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 14))
-        .overlay {
-            RoundedRectangle(cornerRadius: 14)
-                .stroke(Color.white.opacity(0.10), lineWidth: 1)
-        }
+        .prototypeGlassSurface(cornerRadius: 14)
         .contentShape(Rectangle())
         .gesture(
             DragGesture(minimumDistance: 4)

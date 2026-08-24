@@ -35,7 +35,11 @@ private struct BeatVisualPulseSnapshot: Equatable {
     let pulseDate: Date
     let kind: BeatPulseKind
     let eventInterval: TimeInterval
-    var builtEdgeIndex: Int?
+    /// True only when this event begins with the ball genuinely resting at
+    /// the center after a visual reset. Measure boundaries leave the ball at
+    /// the edge and therefore do not repeat the initial descent.
+    let startsFromOrigin: Bool
+    var geometryTransition: BeatVisualGeometryTransition?
 
     /// A pause captures the presentation instant without destroying the last
     /// engine-authored event. The canvas can therefore keep both the geometry
@@ -52,7 +56,8 @@ private struct BeatVisualPulseSnapshot: Equatable {
             pulseDate: pulseDate,
             kind: kind,
             eventInterval: eventInterval,
-            builtEdgeIndex: builtEdgeIndex,
+            startsFromOrigin: startsFromOrigin,
+            geometryTransition: geometryTransition,
             capturedAt: capturedAt ?? date
         )
     }
@@ -64,8 +69,8 @@ private struct BeatVisualFinishAnimation: Equatable {
     let centerReturnDuration: TimeInterval
     let edgeDuration: TimeInterval
     let builtEdgeIndices: [Int]
-    let capturedBallPhase: Double?
-    let capturedBallRadialProgress: Double
+    let capturedBallNormalizedHeight: Double
+    let capturedPulse: BeatVisualPulseSnapshot?
 
     var dismantlingOrder: [Int] {
         Array(builtEdgeIndices.reversed())
@@ -286,10 +291,14 @@ struct MetronomeView: View {
             // An interval-only tempo change must not make the visible Hit or
             // the persistent current-beat locator blink out. Clear only when
             // the number/placement of events changes.
-            if nextPlan.pulsesPerBeat != previousPlan.pulsesPerBeat
-                || nextPlan.eventsPerMeasure != previousPlan.eventsPerMeasure {
+            // Beat-count changes have their own geometry transition below.
+            // Reset here only when the training-note event density changes.
+            if nextPlan.pulsesPerBeat != previousPlan.pulsesPerBeat {
                 visualPulse = nil
-                visualLifecycle.clearCurrentBeatLocation()
+                visualLifecycle.resetScheduleTopology(
+                    beats: engine.preset.beats,
+                    isPlaying: engine.isPlaying
+                )
             }
         }
         .onChange(of: engine.preset.beats) { _, beats in
@@ -1901,6 +1910,7 @@ struct MetronomeView: View {
 
     private func recordVisualTick(pulse: BeatPlaybackPulse?) {
         guard visualFinish == nil, let pulse else { return }
+        let startsFromOrigin = visualLifecycle.ballIsAtOrigin
         var snapshot = BeatVisualPulseSnapshot(
             beat: pulse.beat,
             subdivision: pulse.subdivision,
@@ -1910,38 +1920,28 @@ struct MetronomeView: View {
             pulseDate: pulse.presentedAt,
             kind: pulse.kind,
             eventInterval: pulse.eventInterval,
-            builtEdgeIndex: nil,
+            startsFromOrigin: startsFromOrigin,
+            geometryTransition: nil,
             capturedAt: nil
         )
-        let previousBuiltEdgeCount = visualLifecycle.builtEdgeCount
-        visualLifecycle.record(
+        let transition = visualLifecycle.record(
             beat: snapshot.beat,
             subdivision: snapshot.subdivision,
             cycle: snapshot.cycle,
             beats: engine.preset.beats,
             pulsesPerBeat: snapshot.pulsesPerBeat
         )
-        if visualLifecycle.builtEdgeCount > previousBuiltEdgeCount {
-            snapshot.builtEdgeIndex = visualLifecycle.latestBuiltEdgeIndex
-        }
+        snapshot.geometryTransition = transition
         visualPulse = snapshot
     }
 
-    private func capturedBallPhase(
+    private func capturedBallNormalizedHeight(
         from pulse: BeatVisualPulseSnapshot?,
         at date: Date
-    ) -> Double? {
-        guard let pulse else { return nil }
-        if reduceMotion {
-            return BeatPulseVisualModel.address(
-                beat: pulse.beat,
-                subdivision: pulse.subdivision,
-                beats: engine.preset.beats,
-                pulsesPerBeat: pulse.pulsesPerBeat
-            )?.phase
-        }
+    ) -> Double {
+        guard let pulse else { return visualLifecycle.ballIsAtOrigin ? 1 : 0 }
         let sampleDate = pulse.capturedAt ?? date
-        return BeatVisualMotionModel.sample(
+        guard let sample = BeatVisualMotionModel.sample(
             beat: pulse.beat,
             subdivision: pulse.subdivision,
             elapsed: sampleDate.timeIntervalSince(pulse.pulseDate),
@@ -1949,23 +1949,20 @@ struct MetronomeView: View {
             pulsesPerBeat: pulse.pulsesPerBeat,
             eventsPerMeasure: engine.preset.beats * pulse.pulsesPerBeat,
             beats: engine.preset.beats
-        )?.perimeterPhase
-    }
-
-    private func capturedBallRadialProgress(
-        from pulse: BeatVisualPulseSnapshot?,
-        at date: Date
-    ) -> Double {
-        guard visualLifecycle.builtEdgeCount == 1,
-              let pulse,
-              pulse.builtEdgeIndex == 0
-        else { return 1 }
-
-        let sampleDate = pulse.capturedAt ?? date
-        return BeatVisualPresentationTiming.constructionProgress(
-            elapsed: sampleDate.timeIntervalSince(pulse.pulseDate),
-            eventInterval: pulse.eventInterval,
-            reduceMotion: reduceMotion
+        ) else { return 0 }
+        guard let target = BeatBounceMotionModel.nextTarget(
+            afterBeat: pulse.beat,
+            subdivision: pulse.subdivision,
+            beats: engine.preset.beats,
+            pulsesPerBeat: pulse.pulsesPerBeat,
+            strongBeatIndices: engine.preset.strongBeatIndices,
+            secondaryAccentIndices: engine.preset.secondaryAccentIndices
+        ) else { return 0 }
+        return BeatBounceMotionModel.normalizedEventHeight(
+            eventProgress: sample.eventProgress,
+            toward: target.heightTier,
+            startsFromOrigin: pulse.startsFromOrigin,
+            motionScale: reduceMotion ? 0.32 : 1
         )
     }
 
@@ -2037,14 +2034,11 @@ struct MetronomeView: View {
             centerReturnDuration: centerReturnDuration,
             edgeDuration: edgeDuration,
             builtEdgeIndices: builtEdges,
-            capturedBallPhase: capturedBallPhase(
+            capturedBallNormalizedHeight: capturedBallNormalizedHeight(
                 from: frozenPulse,
                 at: now
-            ) ?? visualLifecycle.ballPhase,
-            capturedBallRadialProgress: capturedBallRadialProgress(
-                from: frozenPulse,
-                at: now
-            )
+            ),
+            capturedPulse: frozenPulse
         )
 
         visualPulse = frozenPulse
@@ -2957,10 +2951,25 @@ private struct MetronomeCanvas: View {
                         in: &context
                     )
                 } else {
+                    // Topology morphs are background geometry. Drawing them
+                    // first prevents a fading old edge from ever crossing on
+                    // top of the solid ball during a beat-count change.
+                    if let topologyTransition {
+                        drawTopologyTransition(
+                            topologyTransition,
+                            at: timeline.date,
+                            center: center,
+                            radius: radius,
+                            effectScale: effectScale,
+                            in: &context
+                        )
+                    }
+
                     switch lifecycle.phase {
                     case .origin, .settled:
                         drawWaitingPoint(
                             at: center,
+                            points: points,
                             date: timeline.date,
                             effectScale: effectScale,
                             in: &context
@@ -2981,22 +2990,13 @@ private struct MetronomeCanvas: View {
                         // those two state writes.
                         drawWaitingPoint(
                             at: center,
+                            points: points,
                             date: timeline.date,
                             effectScale: effectScale,
                             in: &context
                         )
                     }
 
-                    if let topologyTransition {
-                        drawTopologyTransition(
-                            topologyTransition,
-                            at: timeline.date,
-                            center: center,
-                            radius: radius,
-                            effectScale: effectScale,
-                            in: &context
-                        )
-                    }
                 }
             }
             .accessibilityHidden(true)
@@ -3009,15 +3009,16 @@ private struct MetronomeCanvas: View {
         beats: Int,
         direction: RotationDirection
     ) -> [CGPoint] {
-        // The outline stays spatially stable for peripheral readability. The
-        // scheduler's single measure phase is expressed by the ball completing
-        // one directed perimeter cycle; rotating the outline independently
-        // would visually double the tempo.
+        // Slot zero is always the horizontal edge below the center. Generated
+        // edges advance through increasing slots, which is clockwise in the
+        // screen coordinate system (positive y points down). The product's
+        // measure construction now has a fixed clockwise reading independent
+        // of the older perimeter-travel direction preference.
         let safeBeats = min(max(beats, 3), 9)
-        let directionSign: CGFloat = direction == .counterclockwise ? -1 : 1
         let step = CGFloat.pi * 2 / CGFloat(safeBeats)
+        let startAngle = CGFloat.pi / 2 - CGFloat.pi / CGFloat(safeBeats)
         return (0..<safeBeats).map { index in
-            let angle = -CGFloat.pi / 2 + directionSign * CGFloat(index) * step
+            let angle = startAngle + CGFloat(index) * step
             return CGPoint(
                 x: center.x + cos(angle) * radius,
                 y: center.y + sin(angle) * radius
@@ -3099,40 +3100,24 @@ private struct MetronomeCanvas: View {
     ) {
         let presentationDate = pulse?.capturedAt ?? date
         let speedEnergy = pulse.map { controlledSpeedEnergy(for: $0.eventInterval) } ?? 0.35
+        drawMeasureEdges(
+            pulse: pulse,
+            at: presentationDate,
+            points: points,
+            speedEnergy: speedEnergy,
+            effectScale: effectScale,
+            in: &context
+        )
 
-        for edgeIndex in lifecycle.visibleEdgeIndices {
-            let constructionProgress = edgeConstructionProgress(
-                edgeIndex: edgeIndex,
-                pulse: pulse,
-                at: presentationDate
-            )
-            drawEdge(
-                edgeIndex,
-                through: points,
-                progress: constructionProgress,
-                opacity: 0.30 + speedEnergy * 0.08,
-                width: 1.25 + CGFloat(speedEnergy) * 0.22,
-                effectScale: effectScale,
-                in: &context
-            )
-        }
-
-        for index in lifecycle.visibleBeatIndices where points.indices.contains(index) {
-            let style = BeatVisualHierarchyModel.anchorStyle(
-                for: index,
-                lifecycle: lifecycle
-            )
-            drawAnchor(
-                at: points[index],
-                opacity: style.opacity,
-                radius: style.radius,
-                scale: effectScale,
-                in: &context
-            )
-        }
-
-        var ballPhase = lifecycle.ballPhase
+        guard let center = polygonCenter(points),
+              points.count > 1
+        else { return }
+        let baseline = CGPoint(
+            x: (points[0].x + points[1].x) / 2,
+            y: (points[0].y + points[1].y) / 2
+        )
         var eventProgress = 0.0
+        var normalizedHeight = lifecycle.ballIsAtOrigin ? 1.0 : 0.0
         if let pulse,
            let sample = BeatVisualMotionModel.sample(
                 beat: pulse.beat,
@@ -3144,104 +3129,124 @@ private struct MetronomeCanvas: View {
                 beats: preset.beats
            ) {
             eventProgress = sample.eventProgress
-            if reduceMotion,
-               let address = BeatPulseVisualModel.address(
-                    beat: pulse.beat,
-                    subdivision: pulse.subdivision,
-                    beats: preset.beats,
-                    pulsesPerBeat: pulse.pulsesPerBeat
-               ) {
-                ballPhase = address.phase
-            } else {
-                ballPhase = sample.perimeterPhase
+            if let target = BeatBounceMotionModel.nextTarget(
+                afterBeat: pulse.beat,
+                subdivision: pulse.subdivision,
+                beats: preset.beats,
+                pulsesPerBeat: pulse.pulsesPerBeat,
+                strongBeatIndices: preset.strongBeatIndices,
+                secondaryAccentIndices: preset.secondaryAccentIndices
+            ) {
+                normalizedHeight = BeatBounceMotionModel.normalizedEventHeight(
+                    eventProgress: sample.eventProgress,
+                    toward: target.heightTier,
+                    startsFromOrigin: pulse.startsFromOrigin,
+                    motionScale: reduceMotion ? 0.32 : 1
+                )
             }
         }
-
         var feedbackEnvelope = 0.0
         var feedbackKind = BeatPulseKind.weak
-        if isPlaying, let pulse {
+        var feedbackStyle: BeatPulseStyle?
+        let preservesPulseFrame = isPlaying || pulse?.capturedAt != nil
+        if let pulse {
             let style = BeatVisualHierarchyModel.pulseStyle(
                 for: pulse.kind,
                 eventInterval: pulse.eventInterval,
                 dimFlashingLights: dimFlashingLights
             )
-            let age = max(0, date.timeIntervalSince(pulse.pulseDate))
+            // A paused pulse freezes both its position and its rendered
+            // radius. Otherwise the radius would shrink while the center
+            // stayed frozen and the ball would visibly hop at contact.
+            let feedbackDate = pulse.capturedAt ?? date
+            let age = max(0, feedbackDate.timeIntervalSince(pulse.pulseDate))
             feedbackEnvelope = BeatPulseVisualModel.envelope(
                 age: age,
                 duration: style.duration
             )
             feedbackKind = pulse.kind
+            feedbackStyle = style
+        }
 
-            if feedbackEnvelope > 0,
-               let eventAddress = BeatPulseVisualModel.address(
-                    beat: pulse.beat,
-                    subdivision: pulse.subdivision,
-                    beats: preset.beats,
-                    pulsesPerBeat: pulse.pulsesPerBeat
-               ),
-               let eventPosition = perimeterPosition(
-                    for: eventAddress.phase,
-                    points: points
-               ) {
-                if pulse.kind != .subdivision,
-                   lifecycle.visibleEdgeIndices.contains(pulse.beat) {
-                    let edgeStrength: Double
-                    switch pulse.kind {
-                    case .strong:
-                        edgeStrength = 0.54
-                    case .secondary:
-                        edgeStrength = 0.40
-                    case .weak:
-                        edgeStrength = 0.28
-                    case .subdivision:
-                        edgeStrength = 0
-                    }
-                    let flashingScale = dimFlashingLights ? 0.55 : 1
-                    drawEdge(
-                        pulse.beat,
-                        through: points,
-                        progress: 1,
-                        opacity: edgeStrength * flashingScale * feedbackEnvelope,
-                        width: 1.85,
-                        effectScale: effectScale,
-                        in: &context
-                    )
+        let ballRadius = renderedBallRadius(
+            eventProgress: eventProgress,
+            feedbackEnvelope: feedbackEnvelope,
+            feedbackKind: feedbackKind,
+            speedEnergy: speedEnergy,
+            effectScale: effectScale
+        )
+        let baseSlotStrokeWidth = max(
+            0.75,
+            (1.45 + CGFloat(speedEnergy) * 0.22) * effectScale
+        )
+        let highlightedSlotStrokeWidth: CGFloat = preservesPulseFrame
+            && feedbackEnvelope > 0
+            && feedbackKind != .subdivision
+            && lifecycle.visibleEdgePlacements.contains(where: { $0.slotIndex == 0 })
+            ? max(0.75, 1.85 * effectScale)
+            : 0
+        let contactStrokeWidth = max(
+            baseSlotStrokeWidth,
+            highlightedSlotStrokeWidth
+        )
+        let ballPosition = bounceBallPosition(
+            baseline: baseline,
+            center: center,
+            normalizedHeight: normalizedHeight,
+            ballRadius: ballRadius,
+            edgeStrokeWidth: contactStrokeWidth
+        )
+
+        if preservesPulseFrame,
+           let pulse,
+           let style = feedbackStyle,
+           feedbackEnvelope > 0 {
+            if pulse.kind != .subdivision,
+               lifecycle.visibleEdgePlacements.contains(where: { $0.slotIndex == 0 }) {
+                let edgeStrength: Double
+                switch pulse.kind {
+                case .strong:
+                    edgeStrength = 0.54
+                case .secondary:
+                    edgeStrength = 0.40
+                case .weak:
+                    edgeStrength = 0.28
+                case .subdivision:
+                    edgeStrength = 0
                 }
-
-                drawHit(
-                    at: eventPosition,
-                    style: style,
-                    envelope: feedbackEnvelope,
+                let flashingScale = dimFlashingLights ? 0.55 : 1
+                drawMeasureEdge(
+                    slot: 0,
+                    through: points,
+                    progress: 1,
+                    opacity: edgeStrength * flashingScale * feedbackEnvelope,
+                    width: 1.85,
                     effectScale: effectScale,
                     in: &context
                 )
             }
-        }
 
-        guard let ballPhase,
-              let ballPosition = perimeterPosition(for: ballPhase, points: points)
-        else { return }
-
-        let displayedBallPosition: CGPoint
-        if lifecycle.builtEdgeCount == 1,
-           pulse?.builtEdgeIndex == 0,
-           let center = polygonCenter(points) {
-            displayedBallPosition = interpolate(
-                from: center,
-                to: ballPosition,
-                progress: edgeConstructionProgress(
-                    edgeIndex: 0,
-                    pulse: pulse,
-                    at: presentationDate
-                )
+            drawHit(
+                at: ballPosition,
+                style: style,
+                envelope: feedbackEnvelope,
+                effectScale: effectScale,
+                maximumRadius: CGFloat(
+                    BeatBounceContactGeometry.maximumNonPenetratingRadius(
+                        inwardCenterOffset: Double(hypot(
+                            ballPosition.x - baseline.x,
+                            ballPosition.y - baseline.y
+                        )),
+                        edgeStrokeWidth: Double(contactStrokeWidth)
+                    )
+                ),
+                in: &context
             )
-        } else {
-            displayedBallPosition = ballPosition
         }
 
         drawBall(
-            at: displayedBallPosition,
-            isPlaying: isPlaying,
+            at: ballPosition,
+            isPlaying: preservesPulseFrame,
             eventProgress: eventProgress,
             feedbackEnvelope: feedbackEnvelope,
             feedbackKind: feedbackKind,
@@ -3251,21 +3256,146 @@ private struct MetronomeCanvas: View {
         )
     }
 
-    private func edgeConstructionProgress(
-        edgeIndex: Int,
+    private func drawMeasureEdges(
         pulse: BeatVisualPulseSnapshot?,
-        at date: Date
-    ) -> CGFloat {
-        guard !reduceMotion,
+        at date: Date,
+        points: [CGPoint],
+        speedEnergy: Double,
+        effectScale: CGFloat,
+        in context: inout GraphicsContext
+    ) {
+        let baseOpacity = 0.30 + speedEnergy * 0.08
+        let baseWidth = 1.25 + CGFloat(speedEnergy) * 0.22
+        guard let transition = pulse?.geometryTransition,
               let pulse,
-              pulse.builtEdgeIndex == edgeIndex
-        else { return 1 }
+              !reduceMotion
+        else {
+            for placement in lifecycle.visibleEdgePlacements {
+                drawMeasureEdge(
+                    slot: CGFloat(placement.slotIndex),
+                    through: points,
+                    progress: 1,
+                    opacity: placement.slotIndex == 0 ? 0.54 : baseOpacity,
+                    width: placement.slotIndex == 0 ? baseWidth + 0.20 : baseWidth,
+                    effectScale: effectScale,
+                    in: &context
+                )
+            }
+            return
+        }
 
-        return CGFloat(BeatVisualPresentationTiming.constructionProgress(
+        let progress = CGFloat(BeatVisualPresentationTiming.constructionProgress(
             elapsed: date.timeIntervalSince(pulse.pulseDate),
             eventInterval: pulse.eventInterval,
             reduceMotion: false
         ))
+        guard progress < 0.999 else {
+            for placement in lifecycle.visibleEdgePlacements {
+                drawMeasureEdge(
+                    slot: CGFloat(placement.slotIndex),
+                    through: points,
+                    progress: 1,
+                    opacity: placement.slotIndex == 0 ? 0.54 : baseOpacity,
+                    width: placement.slotIndex == 0 ? baseWidth + 0.20 : baseWidth,
+                    effectScale: effectScale,
+                    in: &context
+                )
+            }
+            return
+        }
+
+        let rotatingGenerations = Set(transition.rotations.map(\.generationIndex))
+        let insertedGenerations = Set(transition.insertedPlacements.map(\.generationIndex))
+
+        for rotation in transition.rotations {
+            let slot = CGFloat(rotation.fromSlotIndex)
+                + CGFloat(rotation.toSlotIndex - rotation.fromSlotIndex) * progress
+            drawMeasureEdge(
+                slot: slot,
+                through: points,
+                progress: 1,
+                opacity: baseOpacity,
+                width: baseWidth,
+                effectScale: effectScale,
+                in: &context
+            )
+        }
+
+        for placement in transition.placements
+        where !rotatingGenerations.contains(placement.generationIndex)
+            && !insertedGenerations.contains(placement.generationIndex) {
+            drawMeasureEdge(
+                slot: CGFloat(placement.slotIndex),
+                through: points,
+                progress: 1,
+                opacity: placement.slotIndex == 0 ? 0.54 : baseOpacity,
+                width: baseWidth,
+                effectScale: effectScale,
+                in: &context
+            )
+        }
+
+        for placement in transition.insertedPlacements {
+            // The requested idle/first-beat state already contains one full
+            // horizontal edge. Later measure resets grow that edge anew.
+            let insertionProgress: CGFloat = transition.kind == .measureStart
+                ? 1
+                : progress
+            drawMeasureEdge(
+                slot: CGFloat(placement.slotIndex),
+                through: points,
+                progress: insertionProgress,
+                opacity: placement.slotIndex == 0 ? 0.54 : baseOpacity,
+                width: placement.slotIndex == 0 ? baseWidth + 0.20 : baseWidth,
+                effectScale: effectScale,
+                in: &context
+            )
+        }
+    }
+
+    private func drawMeasureEdge(
+        slot: CGFloat,
+        through points: [CGPoint],
+        progress: CGFloat,
+        opacity: Double,
+        width: CGFloat,
+        effectScale: CGFloat,
+        in context: inout GraphicsContext
+    ) {
+        guard points.count > 1,
+              let center = polygonCenter(points),
+              slot.isFinite
+        else { return }
+        let step = CGFloat.pi * 2 / CGFloat(points.count)
+        let start = rotate(points[0], around: center, angle: slot * step)
+        let end = rotate(points[1], around: center, angle: slot * step)
+        let midpoint = CGPoint(
+            x: (start.x + end.x) / 2,
+            y: (start.y + end.y) / 2
+        )
+        let clampedProgress = min(1, max(0, progress))
+        guard clampedProgress > 0.001 else { return }
+
+        var path = Path()
+        path.move(to: interpolate(
+            from: midpoint,
+            to: start,
+            progress: clampedProgress
+        ))
+        path.addLine(to: interpolate(
+            from: midpoint,
+            to: end,
+            progress: clampedProgress
+        ))
+        context.stroke(
+            path,
+            with: .color(.white.opacity(opacity)),
+            style: StrokeStyle(
+                lineWidth: max(0.75, width * effectScale),
+                lineCap: .round,
+                lineJoin: .round
+            )
+        )
     }
 
     private func drawEdge(
@@ -3298,6 +3428,19 @@ private struct MetronomeCanvas: View {
                 lineCap: .round,
                 lineJoin: .round
             )
+        )
+    }
+
+    private func rotate(
+        _ point: CGPoint,
+        around center: CGPoint,
+        angle: CGFloat
+    ) -> CGPoint {
+        let dx = point.x - center.x
+        let dy = point.y - center.y
+        return CGPoint(
+            x: center.x + dx * cos(angle) - dy * sin(angle),
+            y: center.y + dx * sin(angle) + dy * cos(angle)
         )
     }
 
@@ -3355,8 +3498,33 @@ private struct MetronomeCanvas: View {
         feedbackKind: BeatPulseKind,
         speedEnergy: Double,
         effectScale: CGFloat,
+        radiusOverride: CGFloat? = nil,
         in context: inout GraphicsContext
     ) {
+        let scaledRadius = radiusOverride ?? renderedBallRadius(
+            eventProgress: eventProgress,
+            feedbackEnvelope: feedbackEnvelope,
+            feedbackKind: feedbackKind,
+            speedEnergy: speedEnergy,
+            effectScale: effectScale
+        )
+        let opacity = isPlaying ? 0.94 : 0.74
+        let rect = CGRect(
+            x: point.x - scaledRadius,
+            y: point.y - scaledRadius,
+            width: scaledRadius * 2,
+            height: scaledRadius * 2
+        )
+        context.fill(Path(ellipseIn: rect), with: .color(.white.opacity(opacity)))
+    }
+
+    private func renderedBallRadius(
+        eventProgress: Double,
+        feedbackEnvelope: Double,
+        feedbackKind: BeatPulseKind,
+        speedEnergy: Double,
+        effectScale: CGFloat
+    ) -> CGFloat {
         let kindEnergy: Double
         switch feedbackKind {
         case .strong:
@@ -3380,15 +3548,33 @@ private struct MetronomeCanvas: View {
             + speedEnergy * 0.42
             + motionSettle
         ) * (1 + flashEnergy)
-        let opacity = isPlaying ? 0.94 : 0.74
-        let scaledRadius = CGFloat(radius) * effectScale
-        let rect = CGRect(
-            x: point.x - scaledRadius,
-            y: point.y - scaledRadius,
-            width: scaledRadius * 2,
-            height: scaledRadius * 2
+        return CGFloat(radius) * effectScale
+    }
+
+    private func bounceBallPosition(
+        baseline: CGPoint,
+        center: CGPoint,
+        normalizedHeight: Double,
+        ballRadius: CGFloat,
+        edgeStrokeWidth: CGFloat
+    ) -> CGPoint {
+        let dx = center.x - baseline.x
+        let dy = center.y - baseline.y
+        let distance = hypot(dx, dy)
+        guard distance > 0.000_1 else { return center }
+
+        let inwardOffset = BeatBounceContactGeometry.inwardOffset(
+            edgeToCenterDistance: Double(distance),
+            ballRadius: Double(ballRadius),
+            edgeStrokeWidth: Double(edgeStrokeWidth),
+            normalizedHeight: normalizedHeight
         )
-        context.fill(Path(ellipseIn: rect), with: .color(.white.opacity(opacity)))
+        let unitX = dx / distance
+        let unitY = dy / distance
+        return CGPoint(
+            x: baseline.x + unitX * CGFloat(inwardOffset),
+            y: baseline.y + unitY * CGFloat(inwardOffset)
+        )
     }
 
     private func drawHit(
@@ -3396,11 +3582,17 @@ private struct MetronomeCanvas: View {
         style: BeatPulseStyle,
         envelope: Double,
         effectScale: CGFloat,
+        maximumRadius: CGFloat,
         in context: inout GraphicsContext
     ) {
-        let radius = CGFloat(
-            style.peakRadius * (0.58 + 0.42 * envelope)
-        ) * effectScale
+        // Feedback may grow beyond the solid ball, but never beyond the
+        // available inward clearance. This preserves the stronger visual hit
+        // without allowing the composite white footprint to cross the edge.
+        let radius = min(
+            CGFloat(style.peakRadius * (0.58 + 0.42 * envelope)) * effectScale,
+            maximumRadius
+        )
+        guard radius > 0 else { return }
         let opacity = style.peakOpacity * envelope
         let rect = CGRect(
             x: point.x - radius,
@@ -3413,22 +3605,24 @@ private struct MetronomeCanvas: View {
 
     private func drawWaitingPoint(
         at point: CGPoint,
+        points: [CGPoint],
         date: Date,
         effectScale: CGFloat,
         in context: inout GraphicsContext
     ) {
-        let baselineHalfWidth = 15 * effectScale
-        var baseline = Path()
-        baseline.move(to: CGPoint(x: point.x - baselineHalfWidth, y: point.y))
-        baseline.addLine(to: CGPoint(x: point.x + baselineHalfWidth, y: point.y))
-        context.stroke(
-            baseline,
-            with: .color(.white.opacity(0.11)),
-            style: StrokeStyle(
-                lineWidth: max(0.7, 0.9 * effectScale),
-                lineCap: .round
+        if points.count > 1 {
+            var baseline = Path()
+            baseline.move(to: points[0])
+            baseline.addLine(to: points[1])
+            context.stroke(
+                baseline,
+                with: .color(.white.opacity(0.24)),
+                style: StrokeStyle(
+                    lineWidth: max(0.8, 1.15 * effectScale),
+                    lineCap: .round
+                )
             )
-        )
+        }
 
         let wave = reduceMotion
             ? 0.5
@@ -3495,14 +3689,59 @@ private struct MetronomeCanvas: View {
             )
         }
 
-        if returnRaw < 1,
-           let phase = finish.capturedBallPhase,
-           let perimeterStart = perimeterPosition(for: phase, points: points) {
-            let start = interpolate(
-                from: center,
-                to: perimeterStart,
-                progress: CGFloat(finish.capturedBallRadialProgress)
+        if returnRaw < 1, points.count > 1 {
+            let baseline = CGPoint(
+                x: (points[0].x + points[1].x) / 2,
+                y: (points[0].y + points[1].y) / 2
             )
+            let capturedPulse = finish.capturedPulse
+            let capturedAt = capturedPulse?.capturedAt ?? finish.startedAt
+            let capturedEventProgress = capturedPulse.flatMap { pulse in
+                BeatVisualMotionModel.sample(
+                    beat: pulse.beat,
+                    subdivision: pulse.subdivision,
+                    elapsed: capturedAt.timeIntervalSince(pulse.pulseDate),
+                    eventInterval: pulse.eventInterval,
+                    pulsesPerBeat: pulse.pulsesPerBeat,
+                    eventsPerMeasure: preset.beats * pulse.pulsesPerBeat,
+                    beats: preset.beats
+                )?.eventProgress
+            } ?? 1
+            let capturedKind = capturedPulse?.kind ?? .weak
+            let capturedSpeedEnergy = capturedPulse.map {
+                controlledSpeedEnergy(for: $0.eventInterval)
+            } ?? 0.25
+            let capturedEnvelope: Double
+            if let pulse = capturedPulse {
+                let style = BeatVisualHierarchyModel.pulseStyle(
+                    for: pulse.kind,
+                    eventInterval: pulse.eventInterval,
+                    dimFlashingLights: dimFlashingLights
+                )
+                capturedEnvelope = BeatPulseVisualModel.envelope(
+                    age: max(0, capturedAt.timeIntervalSince(pulse.pulseDate)),
+                    duration: style.duration
+                )
+            } else {
+                capturedEnvelope = 0
+            }
+            let finishBallRadius = renderedBallRadius(
+                eventProgress: capturedEventProgress,
+                feedbackEnvelope: capturedEnvelope,
+                feedbackKind: capturedKind,
+                speedEnergy: capturedSpeedEnergy,
+                effectScale: effectScale
+            )
+            let start = bounceBallPosition(
+                baseline: baseline,
+                center: center,
+                normalizedHeight: finish.capturedBallNormalizedHeight,
+                ballRadius: finishBallRadius,
+                edgeStrokeWidth: max(0.75, 1.35 * effectScale)
+            )
+            let originRadius = 6.1 * effectScale
+            let presentedRadius = finishBallRadius
+                + (originRadius - finishBallRadius) * returnProgress
             drawBall(
                 at: interpolate(
                     from: start,
@@ -3510,11 +3749,12 @@ private struct MetronomeCanvas: View {
                     progress: returnProgress
                 ),
                 isPlaying: false,
-                eventProgress: 1,
-                feedbackEnvelope: 0,
-                feedbackKind: .weak,
-                speedEnergy: 0.25,
+                eventProgress: capturedEventProgress,
+                feedbackEnvelope: capturedEnvelope,
+                feedbackKind: capturedKind,
+                speedEnergy: capturedSpeedEnergy,
                 effectScale: effectScale,
+                radiusOverride: presentedRadius,
                 in: &context
             )
         } else {

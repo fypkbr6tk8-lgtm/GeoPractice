@@ -149,19 +149,206 @@ enum BeatVisualMotionModel {
     }
 }
 
+/// The four visually distinct launch heights used by the bouncing beat ball.
+/// Values are normalized so renderers can scale them to their own geometry.
+enum BeatBounceHeightTier: Equatable, Sendable {
+    case strong
+    case secondary
+    case main
+    case subdivision
+
+    var normalizedPeakHeight: Double {
+        switch self {
+        case .strong: 1
+        case .secondary: 0.72
+        case .main: 0.46
+        case .subdivision: 0.20
+        }
+    }
+
+    init(pulseKind: BeatPulseKind) {
+        switch pulseKind {
+        case .strong: self = .strong
+        case .secondary: self = .secondary
+        case .weak: self = .main
+        case .subdivision: self = .subdivision
+        }
+    }
+}
+
+/// The scheduler address and height hierarchy of the event following a hit.
+/// A renderer uses this target to make the just-landed ball bounce toward the
+/// strength of the *next* sound instead of lagging one event behind the audio.
+struct BeatBounceTarget: Equatable, Sendable {
+    let beat: Int
+    let subdivision: Int
+    let kind: BeatPulseKind
+    let heightTier: BeatBounceHeightTier
+    let wrapsToNextMeasure: Bool
+}
+
+/// Renderer-neutral bounce math. Geometry supplies the baseline and inward
+/// normal; this model supplies only the musical target and normalized height.
+enum BeatBounceMotionModel {
+    static func nextTarget(
+        afterBeat beat: Int,
+        subdivision: Int,
+        beats: Int,
+        pulsesPerBeat: Int,
+        strongBeatIndices: Set<Int>,
+        secondaryAccentIndices: Set<Int>
+    ) -> BeatBounceTarget? {
+        guard beats > 0,
+              pulsesPerBeat > 0,
+              beat >= 0, beat < beats,
+              subdivision >= 0, subdivision < pulsesPerBeat
+        else { return nil }
+
+        let isLastSubdivision = subdivision == pulsesPerBeat - 1
+        let nextBeat = isLastSubdivision ? (beat + 1) % beats : beat
+        let nextSubdivision = isLastSubdivision ? 0 : subdivision + 1
+        let kind = BeatPulseVisualModel.kind(
+            beat: nextBeat,
+            subdivision: nextSubdivision,
+            strongBeatIndices: strongBeatIndices,
+            secondaryAccentIndices: secondaryAccentIndices
+        )
+        return BeatBounceTarget(
+            beat: nextBeat,
+            subdivision: nextSubdivision,
+            kind: kind,
+            heightTier: BeatBounceHeightTier(pulseKind: kind),
+            wrapsToNextMeasure: isLastSubdivision && beat == beats - 1
+        )
+    }
+
+    /// A physical-looking baseline-to-baseline arc for ordinary transitions.
+    /// `eventProgress == 0.5` is the requested tier's apex.
+    static func normalizedArcHeight(
+        eventProgress: Double,
+        tier: BeatBounceHeightTier
+    ) -> Double {
+        guard !eventProgress.isNaN else { return 0 }
+        let progress = min(1, max(0, eventProgress))
+        return tier.normalizedPeakHeight * 4 * progress * (1 - progress)
+    }
+
+    /// One scheduler event owns exactly one visible movement interval.
+    /// Only the first event after a visual reset starts at the center; every
+    /// later event — including the event that crosses a measure boundary —
+    /// starts and ends in contact with the horizontal edge. Keeping this rule
+    /// in the shared model prevents the prototype and production renderers
+    /// from accidentally stretching a landing across two training pulses.
+    static func normalizedEventHeight(
+        eventProgress: Double,
+        toward tier: BeatBounceHeightTier,
+        startsFromOrigin: Bool,
+        motionScale: Double = 1
+    ) -> Double {
+        if startsFromOrigin {
+            return normalizedInitialDescentHeight(eventProgress: eventProgress)
+        }
+        guard motionScale.isFinite else { return 0 }
+        let scale = min(1, max(0, motionScale))
+        return normalizedArcHeight(
+            eventProgress: eventProgress,
+            tier: tier
+        ) * scale
+    }
+
+    /// At a visual-session reset the first strong beat starts at the
+    /// center/apex and falls to the newly generated horizontal edge. A normal
+    /// measure reset does not use this curve: its first beat starts at the
+    /// contact left by the preceding event.
+    static func normalizedInitialDescentHeight(eventProgress: Double) -> Double {
+        guard !eventProgress.isNaN else { return 0 }
+        let progress = min(1, max(0, eventProgress))
+        return BeatBounceHeightTier.strong.normalizedPeakHeight
+            * (1 - progress * progress)
+    }
+}
+
+/// Contact geometry shared by the production and prototype renderers. The
+/// returned offset is measured inward from the edge's centerline, so height
+/// zero places the ball's outer circumference tangent to the visible stroke
+/// instead of putting the ball's center on the line.
+enum BeatBounceContactGeometry {
+    static func inwardOffset(
+        edgeToCenterDistance: Double,
+        ballRadius: Double,
+        edgeStrokeWidth: Double,
+        normalizedHeight: Double
+    ) -> Double {
+        guard edgeToCenterDistance.isFinite,
+              ballRadius.isFinite,
+              edgeStrokeWidth.isFinite,
+              normalizedHeight.isFinite
+        else { return 0 }
+
+        let distance = max(0, edgeToCenterDistance)
+        let clearance = max(0, ballRadius) + max(0, edgeStrokeWidth) / 2
+        let height = min(1, max(0, normalizedHeight))
+        // If a renderer ever makes the ball larger than the polygon inradius,
+        // preserving contact is more important than forcing the center to the
+        // origin. This keeps the solid ball outside the stroke for every size.
+        return clearance + max(0, distance - clearance) * height
+    }
+
+    /// Largest circular feedback footprint that can be drawn around the same
+    /// center without crossing the visible edge stroke.
+    static func maximumNonPenetratingRadius(
+        inwardCenterOffset: Double,
+        edgeStrokeWidth: Double
+    ) -> Double {
+        guard inwardCenterOffset.isFinite, edgeStrokeWidth.isFinite else { return 0 }
+        return max(0, inwardCenterOffset - max(0, edgeStrokeWidth) / 2)
+    }
+}
+
+/// One generated edge and the polygon slot it currently occupies. Slot zero
+/// is the fixed horizontal generation slot; increasing slots rotate clockwise.
+struct BeatVisualEdgePlacement: Equatable, Sendable {
+    let generationIndex: Int
+    let slotIndex: Int
+}
+
+struct BeatVisualEdgeRotation: Equatable, Sendable {
+    let generationIndex: Int
+    let fromSlotIndex: Int
+    let toSlotIndex: Int
+}
+
+/// One authoritative geometry mutation. Renderers may animate the rotations
+/// and insertions, but this value never owns presentation time.
+struct BeatVisualGeometryTransition: Equatable, Sendable {
+    enum Kind: Equatable, Sendable {
+        case measureStart
+        case beatAdvance
+        case gapRecovery
+        case measureReset
+    }
+
+    let revision: UInt64
+    let kind: Kind
+    let cycle: Int
+    let beat: Int
+    let previousPlacements: [BeatVisualEdgePlacement]
+    let placements: [BeatVisualEdgePlacement]
+    let rotations: [BeatVisualEdgeRotation]
+    let insertedPlacements: [BeatVisualEdgePlacement]
+}
+
 /// Playback and visual lifecycle are intentionally separate. The audio engine
-/// supplies the event addresses; this value only remembers the durable visual
-/// facts which must survive a pause or an interval-only tempo change.
-///
-/// An edge is identified by its starting vertex. Edge `0` joins vertex `0` to
-/// vertex `1`; the final edge joins the final vertex back to vertex `0`.
+/// supplies authoritative event addresses; this value derives one measure's
+/// edge placements and remembers the visual facts which survive a pause or an
+/// interval-only tempo change.
 struct BeatVisualLifecycle: Equatable, Sendable {
     enum Phase: Equatable, Sendable {
         /// Idle: only the origin ball is visible.
         case origin
         /// Main beats are adding one polygon edge at a time.
         case building
-        /// The polygon is complete and remains stable across measures.
+        /// The final main beat is active and the polygon is complete.
         case orbiting
         /// Audio has stopped and the ball is returning to the origin.
         case finishing
@@ -171,12 +358,32 @@ struct BeatVisualLifecycle: Equatable, Sendable {
         case settled
     }
 
+    private struct EventCursor: Equatable, Comparable, Sendable {
+        let cycle: Int
+        let beat: Int
+        let subdivision: Int
+
+        static func < (lhs: Self, rhs: Self) -> Bool {
+            if lhs.cycle != rhs.cycle { return lhs.cycle < rhs.cycle }
+            if lhs.beat != rhs.beat { return lhs.beat < rhs.beat }
+            return lhs.subdivision < rhs.subdivision
+        }
+    }
+
     private(set) var phase: Phase = .origin
     private(set) var beatCount: Int
-    /// Actual build order. Geometry is constructed in the renderer's configured
-    /// direction; every authoritative main-beat event appends the next missing
-    /// edge until this collection reaches `beatCount`.
-    private(set) var visibleEdgeIndices: [Int] = []
+    /// Oldest-to-newest generated edges for the current measure. Slot zero is
+    /// always the fixed horizontal generation slot; older edges rotate one
+    /// clockwise slot whenever the next main beat begins.
+    private(set) var visibleEdgePlacements: [BeatVisualEdgePlacement] = []
+    /// The cycle of the latest accepted scheduler event. A newer cycle clears
+    /// the previous measure before any subdivision handling occurs.
+    private(set) var currentMeasureCycle: Int?
+    /// Monotonic token for geometry-only changes. Subdivisions and tempo-only
+    /// revisions deliberately leave it unchanged.
+    private(set) var geometryRevision: UInt64 = 0
+    private(set) var lastGeometryTransition: BeatVisualGeometryTransition?
+    private var latestEventCursor: EventCursor?
     /// The main-beat vertex which owns the most recent valid pulse. It
     /// deliberately survives pauses and interval-only tempo changes so
     /// peripheral vision can still locate the current beat after the short Hit
@@ -195,22 +402,31 @@ struct BeatVisualLifecycle: Equatable, Sendable {
         beatCount = Self.normalizedBeatCount(beats)
     }
 
+    /// Compatibility view used by existing renderers. Values are polygon slot
+    /// indices in generation order, not musical beat numbers. During beat `n`
+    /// they are `[n, n-1, ... 0]`.
+    var visibleEdgeIndices: [Int] {
+        visibleEdgePlacements.map(\.slotIndex)
+    }
+
     var hasEstablishedStructure: Bool {
-        visibleEdgeIndices.count == beatCount
+        visibleEdgePlacements.count == beatCount
             && phase != .origin
             && phase != .settled
     }
 
-    var builtEdgeCount: Int { visibleEdgeIndices.count }
+    var builtEdgeCount: Int { visibleEdgePlacements.count }
 
-    var latestBuiltEdgeIndex: Int? { visibleEdgeIndices.last }
+    var latestBuiltEdgeIndex: Int? { visibleEdgePlacements.last?.slotIndex }
 
     /// Snapshot used by a renderer to schedule reverse teardown without
     /// mutating this model on every animation frame.
-    var dismantlingOrder: [Int] { Array(visibleEdgeIndices.reversed()) }
+    var dismantlingOrder: [Int] {
+        visibleEdgePlacements.reversed().map(\.slotIndex)
+    }
 
     var nextEdgeToDismantle: Int? {
-        phase == .dismantling ? visibleEdgeIndices.last : nil
+        phase == .dismantling ? visibleEdgePlacements.last?.slotIndex : nil
     }
 
     /// Compatibility view for renderers which still draw vertex anchors.
@@ -221,7 +437,7 @@ struct BeatVisualLifecycle: Equatable, Sendable {
         case .origin, .settled:
             return []
         case .building, .orbiting, .finishing, .dismantling:
-            guard !visibleEdgeIndices.isEmpty else { return [] }
+            guard !visibleEdgePlacements.isEmpty else { return [] }
             return Set(visibleEdgeIndices.flatMap { edge in
                 [edge, (edge + 1) % beatCount]
             }).sorted()
@@ -230,6 +446,16 @@ struct BeatVisualLifecycle: Equatable, Sendable {
 
     mutating func reset(beats: Int) {
         self = BeatVisualLifecycle(beats: beats)
+    }
+
+    /// Replaces an event topology (for example quarter → sixteenth training
+    /// pulses) without allowing the previous scheduler cursor to reject the
+    /// restarted cycle-zero stream as stale.
+    mutating func resetScheduleTopology(beats: Int, isPlaying: Bool) {
+        self = BeatVisualLifecycle(beats: beats)
+        if isPlaying {
+            resume()
+        }
     }
 
     mutating func reconfigure(beats: Int) {
@@ -270,7 +496,13 @@ struct BeatVisualLifecycle: Equatable, Sendable {
         currentBeatIndex = nil
     }
 
-    mutating func record(beat: Int, subdivision: Int, cycle: Int, beats: Int) {
+    @discardableResult
+    mutating func record(
+        beat: Int,
+        subdivision: Int,
+        cycle: Int,
+        beats: Int
+    ) -> BeatVisualGeometryTransition? {
         record(
             beat: beat,
             subdivision: subdivision,
@@ -283,13 +515,14 @@ struct BeatVisualLifecycle: Equatable, Sendable {
     /// Records one event from the authoritative scheduler. The legacy overload
     /// above remains source-compatible; new call sites should provide
     /// `pulsesPerBeat` so subdivision positions are exact.
+    @discardableResult
     mutating func record(
         beat: Int,
         subdivision: Int,
         cycle: Int,
         beats: Int,
         pulsesPerBeat: Int
-    ) {
+    ) -> BeatVisualGeometryTransition? {
         record(
             beat: beat,
             subdivision: subdivision,
@@ -305,7 +538,7 @@ struct BeatVisualLifecycle: Equatable, Sendable {
         cycle: Int,
         beats: Int,
         pulsesPerBeat: Int?
-    ) {
+    ) -> BeatVisualGeometryTransition? {
         reconfigure(beats: beats)
         guard phase != .finishing,
               phase != .dismantling,
@@ -313,7 +546,22 @@ struct BeatVisualLifecycle: Equatable, Sendable {
               beat >= 0, beat < beatCount,
               subdivision >= 0,
               pulsesPerBeat.map({ $0 > 0 && subdivision < $0 }) ?? true
-        else { return }
+        else { return nil }
+
+        let cursor = EventCursor(
+            cycle: cycle,
+            beat: beat,
+            subdivision: subdivision
+        )
+        // Duplicate or late callbacks cannot rewind a measure, fabricate an
+        // edge, move the glance locator backward, or implicitly resume pause.
+        guard latestEventCursor.map({ $0 < cursor }) ?? true else { return nil }
+
+        let previousCycle = currentMeasureCycle
+        let previousPlacements = visibleEdgePlacements
+        let startsNewCycle = previousCycle.map { $0 != cycle } ?? false
+        latestEventCursor = cursor
+        currentMeasureCycle = cycle
 
         isPaused = false
         currentBeatIndex = beat
@@ -325,17 +573,109 @@ struct BeatVisualLifecycle: Equatable, Sendable {
             beats: beatCount
         )
 
-        // A subdivision moves/pulses the ball but can never create geometry.
-        guard subdivision == 0 else { return }
-
-        // Bind geometry to the authoritative musical address. Replayed or
-        // duplicated callbacks for the same main beat must never fabricate a
-        // later edge; this also keeps a transport recovery from advancing the
-        // polygon before that later beat is actually heard.
-        if !visibleEdgeIndices.contains(beat) {
-            visibleEdgeIndices.append(beat)
+        // Seeing any event in a newer cycle retires the complete previous
+        // polygon. A missed first main-beat callback may therefore leave the
+        // new measure empty until another authoritative main beat arrives;
+        // subdivisions still never construct an edge.
+        if startsNewCycle, subdivision != 0 {
+            guard !previousPlacements.isEmpty else { return nil }
+            return installGeometry(
+                [],
+                kind: .measureReset,
+                cycle: cycle,
+                beat: beat,
+                previousPlacements: previousPlacements,
+                rotateRetainedEdges: false
+            )
         }
-        phase = visibleEdgeIndices.count == beatCount ? .orbiting : .building
+
+        // A subdivision moves/pulses the ball but can never create geometry.
+        guard subdivision == 0 else { return nil }
+
+        let placements = Self.placements(duringBeat: beat)
+        let kind: BeatVisualGeometryTransition.Kind
+        let rotatesRetainedEdges: Bool
+        if startsNewCycle {
+            kind = .measureReset
+            rotatesRetainedEdges = false
+        } else if previousPlacements.isEmpty {
+            kind = beat == 0 ? .measureStart : .gapRecovery
+            rotatesRetainedEdges = false
+        } else {
+            let expectedPreviousBeat = previousPlacements.count - 1
+            kind = beat == expectedPreviousBeat + 1
+                ? .beatAdvance
+                : .gapRecovery
+            rotatesRetainedEdges = true
+        }
+
+        guard placements != previousPlacements || startsNewCycle else {
+            return nil
+        }
+        return installGeometry(
+            placements,
+            kind: kind,
+            cycle: cycle,
+            beat: beat,
+            previousPlacements: previousPlacements,
+            rotateRetainedEdges: rotatesRetainedEdges
+        )
+    }
+
+    private mutating func installGeometry(
+        _ placements: [BeatVisualEdgePlacement],
+        kind: BeatVisualGeometryTransition.Kind,
+        cycle: Int,
+        beat: Int,
+        previousPlacements: [BeatVisualEdgePlacement],
+        rotateRetainedEdges: Bool
+    ) -> BeatVisualGeometryTransition {
+        let previousByGeneration = Dictionary(
+            uniqueKeysWithValues: previousPlacements.map {
+                ($0.generationIndex, $0.slotIndex)
+            }
+        )
+        let rotations: [BeatVisualEdgeRotation]
+        if rotateRetainedEdges {
+            rotations = placements.compactMap { placement in
+                guard let oldSlot = previousByGeneration[placement.generationIndex],
+                      oldSlot != placement.slotIndex
+                else { return nil }
+                return BeatVisualEdgeRotation(
+                    generationIndex: placement.generationIndex,
+                    fromSlotIndex: oldSlot,
+                    toSlotIndex: placement.slotIndex
+                )
+            }
+        } else {
+            rotations = []
+        }
+        let inserted: [BeatVisualEdgePlacement]
+        if kind == .measureReset || kind == .measureStart {
+            inserted = placements
+        } else {
+            inserted = placements.filter {
+                previousByGeneration[$0.generationIndex] == nil
+            }
+        }
+
+        geometryRevision &+= 1
+        visibleEdgePlacements = placements
+        phase = placements.isEmpty
+            ? .origin
+            : placements.count == beatCount ? .orbiting : .building
+        let transition = BeatVisualGeometryTransition(
+            revision: geometryRevision,
+            kind: kind,
+            cycle: cycle,
+            beat: beat,
+            previousPlacements: previousPlacements,
+            placements: placements,
+            rotations: rotations,
+            insertedPlacements: inserted
+        )
+        lastGeometryTransition = transition
+        return transition
     }
 
     mutating func beginFinishing() {
@@ -356,7 +696,7 @@ struct BeatVisualLifecycle: Equatable, Sendable {
         guard phase == .finishing else { return }
         ballPhase = nil
         ballIsAtOrigin = true
-        if visibleEdgeIndices.isEmpty {
+        if visibleEdgePlacements.isEmpty {
             settle()
         } else {
             phase = .dismantling
@@ -369,13 +709,13 @@ struct BeatVisualLifecycle: Equatable, Sendable {
     @discardableResult
     mutating func removeNextDismantlingEdge() -> Int? {
         guard phase == .dismantling,
-              let removed = visibleEdgeIndices.popLast()
+              let removed = visibleEdgePlacements.popLast()
         else { return nil }
 
-        if visibleEdgeIndices.isEmpty {
+        if visibleEdgePlacements.isEmpty {
             settle()
         }
-        return removed
+        return removed.slotIndex
     }
 
     mutating func settle() {
@@ -384,8 +724,20 @@ struct BeatVisualLifecycle: Equatable, Sendable {
         ballPhase = nil
         returnStartBallPhase = nil
         ballIsAtOrigin = true
-        visibleEdgeIndices.removeAll(keepingCapacity: false)
+        visibleEdgePlacements.removeAll(keepingCapacity: false)
+        currentMeasureCycle = nil
+        latestEventCursor = nil
+        lastGeometryTransition = nil
         phase = .settled
+    }
+
+    private static func placements(duringBeat beat: Int) -> [BeatVisualEdgePlacement] {
+        (0...beat).map { generation in
+            BeatVisualEdgePlacement(
+                generationIndex: generation,
+                slotIndex: beat - generation
+            )
+        }
     }
 
     private static func normalizedBeatCount(_ beats: Int) -> Int {
