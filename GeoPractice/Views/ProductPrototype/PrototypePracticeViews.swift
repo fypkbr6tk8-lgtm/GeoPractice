@@ -71,33 +71,41 @@ struct PrototypePracticeView: View {
                     Button {
                         withAnimation(.snappy(duration: 0.2)) { showsSearch.toggle() }
                     } label: {
-                        PrototypeToolbarIconLabel(systemName: "magnifyingglass")
+                        GeoGlassCapsule {
+                            Image(systemName: "magnifyingglass")
+                                .frame(width: 44, height: 44)
+                        }
                     }
-                    .buttonStyle(PrototypeGlassPressButtonStyle())
+                    .buttonStyle(LiquidPressButtonStyle())
                     .accessibilityLabel(showsSearch ? "收起搜索" : "搜索曲目和段落")
                 }
-                .prototypeHidesSharedToolbarBackground()
 
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     Button {
                         showsArchive = true
                     } label: {
-                        PrototypeToolbarIconLabel(systemName: "archivebox")
+                        GeoGlassCapsule {
+                            Image(systemName: "archivebox")
+                                .frame(width: 44, height: 44)
+                        }
                     }
-                    .buttonStyle(PrototypeGlassPressButtonStyle())
+                    .buttonStyle(LiquidPressButtonStyle())
                     .accessibilityLabel("已归档曲目")
 
                     Button {
                         showsNewSong = true
                     } label: {
-                        PrototypeToolbarIconLabel(systemName: "plus")
+                        GeoGlassCapsule {
+                            Image(systemName: "plus")
+                                .frame(width: 44, height: 44)
+                        }
                     }
-                    .buttonStyle(PrototypeGlassPressButtonStyle())
+                    .buttonStyle(LiquidPressButtonStyle())
                     .accessibilityLabel("新建曲目")
                 }
-                .prototypeHidesSharedToolbarBackground()
             }
-            .prototypeNavigationBarGlassBackground()
+            .toolbarBackground(GeoTheme.background.opacity(0.94), for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .toolbarColorScheme(.dark, for: .navigationBar)
             .sheet(isPresented: $showsNewSong) {
                 PrototypeSongEditorView(store: store, songID: nil)
@@ -134,7 +142,7 @@ struct PrototypePracticeView: View {
                 Button {
                     showsNewSong = true
                 } label: {
-                    PrototypeGlassControl {
+                    GeoGlassCapsule {
                         Label("新建", systemImage: "plus")
                             .font(.caption.weight(.bold))
                             .padding(.horizontal, 14)
@@ -152,12 +160,16 @@ struct PrototypePracticeView: View {
         Button {
             withAnimation(.snappy(duration: 0.2)) { selectedFilter = filter }
         } label: {
-            PrototypeGlassControl {
+            GeoGlassCapsule {
                 Text(title)
                     .font(.caption.weight(.bold))
-                    .foregroundStyle(selectedFilter == filter ? GeoTheme.text : GeoTheme.muted)
+                    .foregroundStyle(selectedFilter == filter ? .black : GeoTheme.text)
                     .padding(.horizontal, 15)
                     .frame(minHeight: 42)
+                    .background(
+                        selectedFilter == filter ? Color.white.opacity(0.92) : .clear,
+                        in: Capsule()
+                    )
             }
         }
         .buttonStyle(LiquidPressButtonStyle())
@@ -560,14 +572,10 @@ private struct PrototypeSongEditorView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button { dismiss() } label: {
-                        PrototypeToolbarTextLabel(title: "取消")
-                    }
-                    .buttonStyle(PrototypeGlassPressButtonStyle())
+                    Button("取消") { dismiss() }
                 }
-                .prototypeHidesSharedToolbarBackground()
                 ToolbarItem(placement: .confirmationAction) {
-                    Button {
+                    Button("保存") {
                         store.saveSong(
                             id: songID,
                             name: name,
@@ -582,13 +590,9 @@ private struct PrototypeSongEditorView: View {
                             archived: archived
                         )
                         dismiss()
-                    } label: {
-                        PrototypeToolbarTextLabel(title: "保存")
                     }
-                    .buttonStyle(PrototypeGlassPressButtonStyle())
                     .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
-                .prototypeHidesSharedToolbarBackground()
             }
         }
         .onAppear(perform: loadIfNeeded)
@@ -694,21 +698,22 @@ private struct PrototypeSongHistoryView: View {
                 } label: {
                     Text(value.title)
                         .font(.caption.weight(.bold))
-                        .foregroundStyle(period == value ? GeoTheme.text : GeoTheme.muted)
+                        .foregroundStyle(period == value ? .black : GeoTheme.text)
                         .frame(maxWidth: .infinity, minHeight: 40)
+                        .background(period == value ? Color.white.opacity(0.92) : .clear, in: Capsule())
                 }
-                .prototypeGlassSelectionButton(period == value)
+                .buttonStyle(.plain)
                 .accessibilityAddTraits(period == value ? .isSelected : [])
             }
         }
         .padding(4)
-        .background { PrototypeGlassControl { Color.clear } }
+        .background { GeoGlassCapsule { Color.clear } }
     }
 
     private var dateControl: some View {
         HStack(spacing: 8) {
             Button { shiftPeriod(-1) } label: {
-                PrototypeGlassControl {
+                GeoGlassCapsule {
                     Image(systemName: "chevron.left").frame(width: 40, height: 40)
                 }
             }
@@ -719,7 +724,7 @@ private struct PrototypeSongHistoryView: View {
                 .frame(maxWidth: .infinity)
                 .multilineTextAlignment(.center)
             Button { shiftPeriod(1) } label: {
-                PrototypeGlassControl {
+                GeoGlassCapsule {
                     Image(systemName: "chevron.right").frame(width: 40, height: 40)
                 }
             }
@@ -737,15 +742,16 @@ private struct PrototypeSongHistoryView: View {
                 } label: {
                     Text(value.title)
                         .font(.caption.weight(.bold))
-                        .foregroundStyle(hand == value ? GeoTheme.text : GeoTheme.muted)
+                        .foregroundStyle(hand == value ? .black : GeoTheme.text)
                         .frame(maxWidth: .infinity, minHeight: 40)
+                        .background(hand == value ? Color.white.opacity(0.92) : .clear, in: Capsule())
                 }
-                .prototypeGlassSelectionButton(hand == value)
+                .buttonStyle(.plain)
                 .accessibilityAddTraits(hand == value ? .isSelected : [])
             }
         }
         .padding(4)
-        .background { PrototypeGlassControl { Color.clear } }
+        .background { GeoGlassCapsule { Color.clear } }
     }
 
     private var filteredRecords: [PrototypeMockRecord] {
@@ -883,14 +889,10 @@ private struct PrototypeBackfillView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button { dismiss() } label: {
-                        PrototypeToolbarTextLabel(title: "取消")
-                    }
-                    .buttonStyle(PrototypeGlassPressButtonStyle())
+                    Button("取消") { dismiss() }
                 }
-                .prototypeHidesSharedToolbarBackground()
                 ToolbarItem(placement: .confirmationAction) {
-                    Button {
+                    Button("保存") {
                         store.addRecord(
                             songID: songID,
                             sectionID: sectionID,
@@ -902,13 +904,9 @@ private struct PrototypeBackfillView: View {
                             count: count
                         )
                         dismiss()
-                    } label: {
-                        PrototypeToolbarTextLabel(title: "保存")
                     }
-                    .buttonStyle(PrototypeGlassPressButtonStyle())
                     .disabled(sectionID == nil)
                 }
-                .prototypeHidesSharedToolbarBackground()
             }
         }
         .onAppear {
@@ -945,7 +943,7 @@ private struct PrototypeArchiveView: View {
                                                 .font(.caption.weight(.bold))
                                                 .padding(.horizontal, 14)
                                                 .frame(minHeight: 40)
-                                                .prototypeGlassControl(cornerRadius: 13)
+                                                .prototypeGlassSurface(cornerRadius: 13)
                                         }
                                         .buttonStyle(LiquidPressButtonStyle())
                                     }
@@ -959,12 +957,8 @@ private struct PrototypeArchiveView: View {
             .navigationTitle("已归档")
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button { dismiss() } label: {
-                        PrototypeToolbarTextLabel(title: "完成")
-                    }
-                    .buttonStyle(PrototypeGlassPressButtonStyle())
+                    Button("完成") { dismiss() }
                 }
-                .prototypeHidesSharedToolbarBackground()
             }
         }
     }
@@ -1336,7 +1330,7 @@ private extension View {
         font(.caption.weight(.bold))
             .foregroundStyle(GeoTheme.text)
             .frame(maxWidth: .infinity, minHeight: 46)
-            .prototypeGlassControl(cornerRadius: 14)
+            .prototypeGlassSurface(cornerRadius: 14, emphasized: prominent)
     }
 }
 

@@ -45,7 +45,8 @@ struct PrototypeStatisticsView: View {
             }
             .navigationTitle("统计")
             .navigationBarTitleDisplayMode(.inline)
-            .prototypeNavigationBarGlassBackground()
+            .toolbarBackground(GeoTheme.background.opacity(0.94), for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .toolbarColorScheme(.dark, for: .navigationBar)
             .sheet(isPresented: $isShowingSharePreview) {
                 PrototypeSharePreviewView(
@@ -110,11 +111,12 @@ struct PrototypeStatisticsView: View {
     }
 
     private var periodPicker: some View {
-        PrototypeGlassControl(cornerRadius: 18) {
+        LiquidControlPanel(contentPadding: 4, cornerRadius: 18) {
             HStack(spacing: 5) {
                 ForEach(PrototypeStatisticsPeriod.allCases) { option in
-                    PrototypeGlassSegmentButton(
+                    GeoSegmentButton(
                         title: option.title,
+                        symbol: nil,
                         isActive: period == option
                     ) {
                         withAnimation(.snappy(duration: 0.20)) {
@@ -124,12 +126,11 @@ struct PrototypeStatisticsView: View {
                     }
                 }
             }
-            .padding(4)
         }
     }
 
     private var periodNavigator: some View {
-        PrototypeGlassControl(cornerRadius: 18) {
+        LiquidControlPanel(contentPadding: 4, cornerRadius: 18) {
             HStack(spacing: 4) {
                 periodArrow(direction: -1)
 
@@ -154,7 +155,6 @@ struct PrototypeStatisticsView: View {
 
                 periodArrow(direction: 1)
             }
-            .padding(4)
         }
     }
 
@@ -174,11 +174,12 @@ struct PrototypeStatisticsView: View {
     }
 
     private var handPicker: some View {
-        PrototypeGlassControl(cornerRadius: 18) {
+        LiquidControlPanel(contentPadding: 4, cornerRadius: 18) {
             HStack(spacing: 5) {
                 ForEach(PrototypeStatisticsHand.allCases) { option in
-                    PrototypeGlassSegmentButton(
+                    GeoSegmentButton(
                         title: option.title,
+                        symbol: nil,
                         isActive: hand == option
                     ) {
                         withAnimation(.snappy(duration: 0.20)) {
@@ -187,7 +188,6 @@ struct PrototypeStatisticsView: View {
                     }
                 }
             }
-            .padding(4)
         }
     }
 
@@ -443,7 +443,7 @@ private struct PrototypeActionButton: View {
         .foregroundStyle(GeoTheme.text)
         .frame(maxWidth: .infinity, minHeight: 46)
         .padding(.horizontal, 8)
-        .prototypeGlassControl(cornerRadius: 15)
+        .prototypeGlassSurface(cornerRadius: 15)
     }
 }
 
@@ -576,14 +576,11 @@ private struct PrototypeSharePreviewView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button { dismiss() } label: {
-                        PrototypeToolbarTextLabel(title: "完成")
-                    }
-                    .buttonStyle(PrototypeGlassPressButtonStyle())
+                    Button("完成") { dismiss() }
                 }
-                .prototypeHidesSharedToolbarBackground()
             }
-            .prototypeNavigationBarGlassBackground()
+            .toolbarBackground(GeoTheme.background.opacity(0.96), for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .toolbarColorScheme(.dark, for: .navigationBar)
             .task {
                 renderShareImageIfNeeded()
@@ -1018,7 +1015,7 @@ private struct PrototypeShareActionLabel: View {
             .frame(maxWidth: .infinity, minHeight: 52)
             .padding(.horizontal, 12)
             .contentShape(Rectangle())
-            .prototypeGlassControl(cornerRadius: 18)
+            .prototypeGlassSurface(cornerRadius: 18, emphasized: true)
     }
 }
 
@@ -1156,14 +1153,11 @@ struct PrototypeSettingsView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button { dismiss() } label: {
-                        PrototypeToolbarTextLabel(title: "完成")
-                    }
-                    .buttonStyle(PrototypeGlassPressButtonStyle())
+                    Button("完成") { dismiss() }
                 }
-                .prototypeHidesSharedToolbarBackground()
             }
-            .prototypeNavigationBarGlassBackground()
+            .toolbarBackground(GeoTheme.background.opacity(0.94), for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .toolbarColorScheme(.dark, for: .navigationBar)
             .alert(item: $activeAlert) { alert in
                 Alert(
@@ -1207,7 +1201,7 @@ struct PrototypeSettingsView: View {
                     .foregroundStyle(GeoTheme.muted)
             }
             .padding(20)
-            .prototypeGlassControl(cornerRadius: 24)
+            .prototypeGlassSurface(cornerRadius: 24)
         }
         .buttonStyle(.plain)
     }
@@ -1243,7 +1237,7 @@ struct PrototypeSettingsView: View {
                         .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                 }
                 .buttonStyle(LiquidPressButtonStyle())
-                .prototypeGlassControl(cornerRadius: 18)
+                .prototypeGlassSurface(cornerRadius: 18, emphasized: true)
                 .accessibilityLabel("试听当前节拍音色")
                 .accessibilityValue(sound)
             }
@@ -1397,7 +1391,7 @@ struct PrototypeSettingsView: View {
                 .font(.subheadline.weight(.bold))
                 .foregroundStyle(GeoTheme.text)
                 .frame(maxWidth: .infinity, minHeight: 50)
-                .prototypeGlassControl(cornerRadius: 16)
+                .prototypeGlassSurface(cornerRadius: 16)
         }
         .buttonStyle(.plain)
     }
@@ -1552,7 +1546,7 @@ private struct PrototypeSoundMenu: View {
             .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         }
         .buttonStyle(LiquidPressButtonStyle())
-        .prototypeGlassControl(cornerRadius: 18)
+        .prototypeGlassSurface(cornerRadius: 18)
         .accessibilityLabel("节拍音色")
         .accessibilityValue(selection)
         .accessibilityHint("打开菜单；选择音色时会播放一次短促试听音")
@@ -1687,17 +1681,12 @@ private struct PrototypeProView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
 
-                    Button {
+                    Button("查看订阅方案") {
                         isShowingPlaceholder = true
-                    } label: {
-                        Text("查看订阅方案")
-                            .font(.headline.weight(.bold))
-                            .foregroundStyle(GeoTheme.text)
-                            .padding(.horizontal, 22)
-                            .frame(minHeight: 50)
-                            .prototypeGlassControl()
                     }
-                    .buttonStyle(LiquidPressButtonStyle())
+                    .buttonStyle(.borderedProminent)
+                    .tint(Color.white.opacity(0.90))
+                    .foregroundStyle(.black)
                 }
                 .foregroundStyle(GeoTheme.text)
                 .frame(maxWidth: 560)
@@ -1863,7 +1852,8 @@ private struct PrototypeSettingsDestination<Content: View>: View {
         }
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
-        .prototypeNavigationBarGlassBackground()
+        .toolbarBackground(GeoTheme.background.opacity(0.94), for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
     }
 }
 

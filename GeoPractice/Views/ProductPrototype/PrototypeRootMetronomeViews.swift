@@ -55,7 +55,7 @@ struct ProductPrototypeRootView: View {
                         .font(.system(size: 12, weight: .bold))
                         .padding(.horizontal, 14)
                         .frame(minHeight: 44)
-                        .prototypeGlassControl(cornerRadius: 16)
+                        .prototypeGlassSurface(cornerRadius: 16, emphasized: true)
                 }
                 .buttonStyle(LiquidPressButtonStyle())
                 .foregroundStyle(GeoTheme.text)
@@ -72,7 +72,7 @@ private struct ProductPrototypeTabBar: View {
     @Binding var selection: ProductPrototypeTab
 
     var body: some View {
-        PrototypeGlassControl {
+        GeoGlassCapsule {
             HStack(spacing: 4) {
                 tabButton(.statistics, title: "统计", symbol: "chart.bar.xaxis")
                 tabButton(.practice, title: "打卡+", symbol: "checkmark.circle")
@@ -96,11 +96,18 @@ private struct ProductPrototypeTabBar: View {
             Label(title, systemImage: symbol)
                 .font(.system(size: 12, weight: .bold))
                 .labelStyle(.titleAndIcon)
-                .foregroundStyle(selection == tab ? GeoTheme.text : GeoTheme.muted)
+                .foregroundStyle(selection == tab ? .black : GeoTheme.text)
                 .frame(maxWidth: .infinity, minHeight: 44)
+                .background {
+                    if selection == tab {
+                        Capsule(style: .continuous)
+                            .fill(Color.white.opacity(0.92))
+                            .matchedGeometryEffectFallback(id: title)
+                    }
+                }
                 .contentShape(Capsule())
         }
-        .prototypeGlassSelectionButton(selection == tab)
+        .buttonStyle(.plain)
         .accessibilityAddTraits(selection == tab ? .isSelected : [])
     }
 }
@@ -187,12 +194,14 @@ private struct PrototypeMetronomeView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button(action: onOpenSettings) {
-                        PrototypeToolbarIconLabel(systemName: "line.3.horizontal")
+                        GeoGlassCapsule {
+                            Image(systemName: "line.3.horizontal")
+                                .frame(width: 44, height: 44)
+                        }
                     }
-                    .buttonStyle(PrototypeGlassPressButtonStyle())
+                    .buttonStyle(LiquidPressButtonStyle())
                     .accessibilityLabel("更多设置")
                 }
-                .prototypeHidesSharedToolbarBackground()
                 ToolbarItem(placement: .principal) {
                     VStack(spacing: 1) {
                         Text("GEOBEAT")
@@ -208,14 +217,17 @@ private struct PrototypeMetronomeView: View {
                         isPlaying = false
                         showsSummary = true
                     } label: {
-                        PrototypeToolbarIconLabel(systemName: "checkmark")
+                        GeoGlassCapsule {
+                            Image(systemName: "checkmark")
+                                .frame(width: 44, height: 44)
+                        }
                     }
-                    .buttonStyle(PrototypeGlassPressButtonStyle())
+                    .buttonStyle(LiquidPressButtonStyle())
                     .accessibilityLabel("练习完毕")
                 }
-                .prototypeHidesSharedToolbarBackground()
             }
-            .prototypeNavigationBarGlassBackground()
+            .toolbarBackground(GeoTheme.background.opacity(0.94), for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .toolbarColorScheme(.dark, for: .navigationBar)
         }
         .onAppear(perform: loadLaunchIfNeeded)
@@ -318,7 +330,7 @@ private struct PrototypeMetronomeView: View {
             .frame(minHeight: 58)
         }
         .buttonStyle(.plain)
-        .prototypeGlassControl(cornerRadius: 18)
+        .prototypeGlassSurface(cornerRadius: 18, emphasized: true)
         .accessibilityLabel("为\(selectedHand.title)记录一次练习，当前\(countDisplay)")
     }
 
@@ -334,16 +346,20 @@ private struct PrototypeMetronomeView: View {
                         Text(hand.title)
                             .font(.system(size: 9, weight: .semibold))
                     }
-                    .foregroundStyle(selectedHand == hand ? GeoTheme.text : GeoTheme.muted)
+                    .foregroundStyle(selectedHand == hand ? .black : GeoTheme.text)
                     .frame(maxWidth: .infinity, minHeight: 48)
+                    .background(
+                        selectedHand == hand ? Color.white.opacity(0.92) : Color.clear,
+                        in: Capsule(style: .continuous)
+                    )
                 }
-                .prototypeGlassSelectionButton(selectedHand == hand)
+                .buttonStyle(.plain)
                 .accessibilityAddTraits(selectedHand == hand ? .isSelected : [])
             }
         }
         .padding(4)
         .background {
-            PrototypeGlassControl {
+            GeoGlassCapsule {
                 Color.clear
             }
         }
@@ -689,7 +705,7 @@ private struct PrototypeParameterMenu<MenuContent: View>: View {
             }
             .frame(maxWidth: .infinity, minHeight: 58)
             .padding(.horizontal, 7)
-            .prototypeGlassControl(cornerRadius: 14)
+            .prototypeGlassSurface(cornerRadius: 14)
         }
     }
 }
@@ -706,8 +722,8 @@ private struct PrototypeTempoTile: View {
             HStack(spacing: 5) {
                 Button { bpm = max(30, bpm - 1) } label: {
                     Image(systemName: "minus")
-                        .frame(width: 44, height: 44)
-                        .prototypeGlassControl()
+                        .frame(width: 24, height: 36)
+                        .background(.thinMaterial, in: Capsule())
                 }
                 Text("\(bpm)")
                     .font(.system(size: 16, weight: .black, design: .rounded))
@@ -715,15 +731,15 @@ private struct PrototypeTempoTile: View {
                     .frame(minWidth: 31)
                 Button { bpm = min(240, bpm + 1) } label: {
                     Image(systemName: "plus")
-                        .frame(width: 44, height: 44)
-                        .prototypeGlassControl()
+                        .frame(width: 24, height: 36)
+                        .background(.thinMaterial, in: Capsule())
                 }
             }
             .buttonStyle(.plain)
         }
         .frame(maxWidth: .infinity, minHeight: 58)
         .padding(.horizontal, 5)
-        .prototypeGlassControl(cornerRadius: 14)
+        .prototypeGlassSurface(cornerRadius: 14)
         .contentShape(Rectangle())
         .gesture(
             DragGesture(minimumDistance: 4)
@@ -786,12 +802,8 @@ private struct PrototypePracticeSummarySheet: View {
             }
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button { dismiss() } label: {
-                        PrototypeToolbarTextLabel(title: "完成")
-                    }
-                    .buttonStyle(PrototypeGlassPressButtonStyle())
+                    Button("完成") { dismiss() }
                 }
-                .prototypeHidesSharedToolbarBackground()
             }
         }
         .presentationDetents([.medium, .large])
