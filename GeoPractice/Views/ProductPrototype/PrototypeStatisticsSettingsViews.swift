@@ -1,7 +1,9 @@
 import Photos
+import PhotosUI
 import AudioToolbox
 import SwiftUI
 import UIKit
+import ObjectiveC
 
 // MARK: - Statistics prototype
 
@@ -114,16 +116,22 @@ struct PrototypeStatisticsView: View {
         LiquidControlPanel(contentPadding: 4, cornerRadius: 18) {
             HStack(spacing: 5) {
                 ForEach(PrototypeStatisticsPeriod.allCases) { option in
-                    GeoSegmentButton(
-                        title: option.title,
-                        symbol: nil,
-                        isActive: period == option
-                    ) {
+                    let isSelected = period == option
+                    PrototypeGlassSegment(isSelected: isSelected) {
                         withAnimation(.snappy(duration: 0.20)) {
                             period = option
                             anchorDate = .now
                         }
+                    } label: {
+                        Text(option.title)
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(GeoTheme.text.opacity(isSelected ? 0.98 : 0.55))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.75)
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                            .padding(.horizontal, 5)
                     }
+                    .accessibilityAddTraits(isSelected ? .isSelected : [])
                 }
             }
         }
@@ -177,15 +185,21 @@ struct PrototypeStatisticsView: View {
         LiquidControlPanel(contentPadding: 4, cornerRadius: 18) {
             HStack(spacing: 5) {
                 ForEach(PrototypeStatisticsHand.allCases) { option in
-                    GeoSegmentButton(
-                        title: option.title,
-                        symbol: nil,
-                        isActive: hand == option
-                    ) {
+                    let isSelected = hand == option
+                    PrototypeGlassSegment(isSelected: isSelected) {
                         withAnimation(.snappy(duration: 0.20)) {
                             hand = option
                         }
+                    } label: {
+                        Text(option.title)
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(GeoTheme.text.opacity(isSelected ? 0.98 : 0.55))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.75)
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                            .padding(.horizontal, 5)
                     }
+                    .accessibilityAddTraits(isSelected ? .isSelected : [])
                 }
             }
         }
@@ -1139,6 +1153,9 @@ struct PrototypeSettingsView: View {
                         appearanceCard
                         dataCard
                         aboutCard
+                        if #available(iOS 26.0, *) {
+                            glassVariantLabEntry
+                        }
                         currentAppButton
                     }
                     .frame(maxWidth: 760)
@@ -1383,6 +1400,20 @@ struct PrototypeSettingsView: View {
             }
             .buttonStyle(.plain)
         }
+    }
+
+    @available(iOS 26.0, *)
+    private var glassVariantLabEntry: some View {
+        NavigationLink {
+            PrototypeGlassVariantLabView()
+        } label: {
+            Label("玻璃效果测试（variant 0–15）", systemImage: "square.stack.3d.up")
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(GeoTheme.text)
+                .frame(maxWidth: .infinity, minHeight: 50)
+                .prototypeGlassSurface(cornerRadius: 16)
+        }
+        .buttonStyle(.plain)
     }
 
     private var currentAppButton: some View {
@@ -1681,12 +1712,7 @@ private struct PrototypeProView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
 
-                    Button("查看订阅方案") {
-                        isShowingPlaceholder = true
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(Color.white.opacity(0.90))
-                    .foregroundStyle(.black)
+                    proSubscribeButton
                 }
                 .foregroundStyle(GeoTheme.text)
                 .frame(maxWidth: 560)
@@ -1701,6 +1727,43 @@ private struct PrototypeProView: View {
         } message: {
             Text("此 Mock 版本不会调用 StoreKit 或产生付款。")
         }
+    }
+
+    @ViewBuilder
+    private var proSubscribeButton: some View {
+        let title = Text("查看订阅方案")
+            .font(.headline.weight(.bold))
+            .frame(maxWidth: .infinity, minHeight: 46)
+#if compiler(>=6.2)
+        if #available(iOS 26.0, *) {
+            Button {
+                isShowingPlaceholder = true
+            } label: {
+                title
+            }
+            .buttonStyle(.glassProminent)
+            .buttonBorderShape(.capsule)
+            .tint(Color.white.opacity(0.16))
+        } else {
+            Button {
+                isShowingPlaceholder = true
+            } label: {
+                title
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(Color.white.opacity(0.90))
+            .foregroundStyle(.black)
+        }
+#else
+        Button {
+            isShowingPlaceholder = true
+        } label: {
+            title
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(Color.white.opacity(0.90))
+        .foregroundStyle(.black)
+#endif
     }
 }
 
@@ -1874,4 +1937,213 @@ private func prototypeDuration(_ interval: TimeInterval) -> String {
 
 #Preview("Prototype Settings") {
     PrototypeSettingsView()
+}
+
+// MARK: - TEMPORARY DEBUG TOOL — not for shipping.
+/// Allocates a `_UIViewGlass` via its private `initWithVariant:size:smoothness:subdued:`
+/// initializer using a raw IMP call (like FocusLite's GlassMaterials.swift
+/// does for `set_variant:` on macOS), since that selector takes primitive
+/// arguments that `perform(_:with:)`/KVC cannot pass. `variant` is read-only
+/// after construction, so this is the only way to try values other than the
+/// default 0.
+@available(iOS 26.0, *)
+func makeViewGlass(variant: Int, size: Int, smoothness: Double, subdued: Bool) -> NSObject? {
+    guard let glassClass = NSClassFromString("_UIViewGlass") as? NSObject.Type else { return nil }
+    let sel = NSSelectorFromString("initWithVariant:size:smoothness:subdued:")
+    guard let method = class_getInstanceMethod(glassClass, sel) else {
+        print("makeViewGlass: selector not found")
+        return nil
+    }
+    typealias InitFn = @convention(c) (AnyObject, Selector, Int, Int, Double, Bool) -> Unmanaged<AnyObject>?
+    let imp = method_getImplementation(method)
+    let fn = unsafeBitCast(imp, to: InitFn.self)
+    guard let allocated = (glassClass as AnyObject).perform(NSSelectorFromString("alloc"))?.takeUnretainedValue() else { return nil }
+    let result = fn(allocated, sel, variant, size, smoothness, subdued)
+    return result?.takeUnretainedValue() as? NSObject
+}
+
+// MARK: - Glass variant test page
+
+/// One tile showing the explicit `_UIViewGlass` glass (same recipe used in
+/// production panels — see `PrototypeGlassPanelBackground` in
+/// PrototypeModels.swift) at a specific `variant` index, so all of them can
+/// be compared side by side against a chosen backdrop.
+@available(iOS 26.0, *)
+private struct PrototypeGlassVariantTile: UIViewRepresentable {
+    let variant: Int
+
+    func makeUIView(context: Context) -> UIVisualEffectView {
+        let view = UIVisualEffectView(effect: buildEffect())
+        view.layer.cornerRadius = 24
+        view.layer.cornerCurve = .continuous
+        view.clipsToBounds = true
+        return view
+    }
+
+    func updateUIView(_ view: UIVisualEffectView, context: Context) {
+        view.effect = buildEffect()
+    }
+
+    private func buildEffect() -> UIVisualEffect? {
+        guard let glassObj = makeViewGlass(variant: variant, size: 0, smoothness: 0, subdued: false) else {
+            return nil
+        }
+        glassObj.setValue(true, forKey: "contentLensing")
+        glassObj.setValue(false, forKey: "excludingControlLensing")
+        glassObj.setValue(false, forKey: "excludingControlDisplacement")
+        glassObj.setValue(true, forKey: "flexible")
+
+        let sel = NSSelectorFromString("effectWithGlass:")
+        guard (UIGlassEffect.self as AnyObject).responds(to: sel) else { return nil }
+        return (UIGlassEffect.self as AnyObject).perform(sel, with: glassObj)?
+            .takeUnretainedValue() as? UIVisualEffect
+    }
+}
+
+/// High-contrast diagonal stripe field — one of the selectable test
+/// backdrops, useful because straight lines make any edge refraction/
+/// displacement immediately visible.
+private struct PrototypeGlassLabStripeBackdrop: View {
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack {
+                ForEach(0..<28, id: \.self) { i in
+                    Rectangle()
+                        .fill(
+                            i.isMultiple(of: 2)
+                                ? Color(red: 0.35, green: 0.75, blue: 1.0)
+                                : Color(red: 0.02, green: 0.05, blue: 0.10)
+                        )
+                        .frame(width: 46, height: proxy.size.height * 2.4)
+                        .rotationEffect(.degrees(35))
+                        .offset(x: CGFloat(i) * 60 - 500, y: 0)
+                }
+            }
+            .frame(width: proxy.size.width, height: proxy.size.height)
+        }
+    }
+}
+
+private enum PrototypeGlassLabBackgroundKind: String, CaseIterable, Identifiable {
+    case solid = "纯色"
+    case stripes = "条纹"
+    case photo = "图片"
+    var id: Self { self }
+}
+
+/// Test page: every `_UIViewGlass` variant (0–15) rendered side by side over
+/// a backdrop you can swap — solid color, stripes, or a photo from your
+/// library — so refraction/lensing differences between variants are easy to
+/// judge against real content instead of guessing from a single fixed scene.
+@available(iOS 26.0, *)
+struct PrototypeGlassVariantLabView: View {
+    @State private var backgroundKind: PrototypeGlassLabBackgroundKind = .stripes
+    @State private var solidColor: Color = .blue
+    @State private var selectedPhotoItem: PhotosPickerItem?
+    @State private var selectedImage: UIImage?
+
+    var body: some View {
+        ZStack {
+            backgroundView
+                .ignoresSafeArea()
+
+            ScrollView {
+                VStack(spacing: 18) {
+                    controls
+
+                    ForEach(0..<16) { variant in
+                        VStack(spacing: 6) {
+                            Text("variant \(variant)")
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(.white)
+                                .shadow(color: .black.opacity(0.6), radius: 3)
+                            PrototypeGlassVariantTile(variant: variant)
+                                .frame(height: 120)
+                        }
+                        .padding(.horizontal, 16)
+                    }
+                }
+                .padding(.vertical, 16)
+            }
+        }
+        .navigationTitle("玻璃效果测试")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(.visible, for: .navigationBar)
+        .toolbarColorScheme(.dark, for: .navigationBar)
+    }
+
+    @ViewBuilder
+    private var backgroundView: some View {
+        switch backgroundKind {
+        case .solid:
+            solidColor
+        case .stripes:
+            PrototypeGlassLabStripeBackdrop()
+        case .photo:
+            GeometryReader { proxy in
+                if let selectedImage {
+                    Image(uiImage: selectedImage)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: proxy.size.width, height: proxy.size.height)
+                        .clipped()
+                } else {
+                    Color.black
+                        .overlay {
+                            Text("还没有选择图片")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.white.opacity(0.5))
+                        }
+                }
+            }
+        }
+    }
+
+    private var controls: some View {
+        VStack(spacing: 12) {
+            Picker("背景", selection: $backgroundKind) {
+                ForEach(PrototypeGlassLabBackgroundKind.allCases) { kind in
+                    Text(kind.rawValue).tag(kind)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            if backgroundKind == .solid {
+                ColorPicker("背景颜色", selection: $solidColor, supportsOpacity: false)
+                    .foregroundStyle(.white)
+            }
+
+            if backgroundKind == .photo {
+                PhotosPicker(selection: $selectedPhotoItem, matching: .images) {
+                    Label(
+                        selectedImage == nil ? "从相册选择图片" : "更换图片",
+                        systemImage: "photo.on.rectangle"
+                    )
+                    .font(.subheadline.weight(.semibold))
+                }
+                .foregroundStyle(.white)
+                .onChange(of: selectedPhotoItem) { _, newItem in
+                    Task {
+                        guard let newItem,
+                              let data = try? await newItem.loadTransferable(type: Data.self),
+                              let uiImage = UIImage(data: data) else { return }
+                        selectedImage = uiImage
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .padding(.horizontal, 16)
+    }
+}
+
+#Preview("Glass Variant Lab") {
+    if #available(iOS 26.0, *) {
+        NavigationStack {
+            PrototypeGlassVariantLabView()
+        }
+        .preferredColorScheme(.dark)
+    }
 }

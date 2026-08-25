@@ -157,23 +157,17 @@ struct PrototypePracticeView: View {
     }
 
     private func filterButton(_ filter: PrototypePracticeFilter, title: String) -> some View {
-        Button {
+        let isSelected = selectedFilter == filter
+        return PrototypeGlassSegment(isSelected: isSelected) {
             withAnimation(.snappy(duration: 0.2)) { selectedFilter = filter }
         } label: {
-            GeoGlassCapsule {
-                Text(title)
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(selectedFilter == filter ? .black : GeoTheme.text)
-                    .padding(.horizontal, 15)
-                    .frame(minHeight: 42)
-                    .background(
-                        selectedFilter == filter ? Color.white.opacity(0.92) : .clear,
-                        in: Capsule()
-                    )
-            }
+            Text(title)
+                .font(.caption.weight(.bold))
+                .foregroundStyle(GeoTheme.text.opacity(isSelected ? 0.98 : 0.55))
+                .padding(.horizontal, 15)
+                .frame(minHeight: 42)
         }
-        .buttonStyle(LiquidPressButtonStyle())
-        .accessibilityAddTraits(selectedFilter == filter ? .isSelected : [])
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     private var searchField: some View {
@@ -693,17 +687,16 @@ private struct PrototypeSongHistoryView: View {
     private var periodControl: some View {
         HStack(spacing: 4) {
             ForEach(PrototypeHistoryPeriod.allCases) { value in
-                Button {
+                let isSelected = period == value
+                PrototypeGlassSegment(isSelected: isSelected) {
                     withAnimation(.snappy(duration: 0.2)) { period = value }
                 } label: {
                     Text(value.title)
                         .font(.caption.weight(.bold))
-                        .foregroundStyle(period == value ? .black : GeoTheme.text)
+                        .foregroundStyle(GeoTheme.text.opacity(isSelected ? 0.98 : 0.55))
                         .frame(maxWidth: .infinity, minHeight: 40)
-                        .background(period == value ? Color.white.opacity(0.92) : .clear, in: Capsule())
                 }
-                .buttonStyle(.plain)
-                .accessibilityAddTraits(period == value ? .isSelected : [])
+                .accessibilityAddTraits(isSelected ? .isSelected : [])
             }
         }
         .padding(4)
@@ -737,17 +730,16 @@ private struct PrototypeSongHistoryView: View {
     private var handControl: some View {
         HStack(spacing: 4) {
             ForEach(PrototypePracticeHand.allCases) { value in
-                Button {
+                let isSelected = hand == value
+                PrototypeGlassSegment(isSelected: isSelected) {
                     hand = value
                 } label: {
                     Text(value.title)
                         .font(.caption.weight(.bold))
-                        .foregroundStyle(hand == value ? .black : GeoTheme.text)
+                        .foregroundStyle(GeoTheme.text.opacity(isSelected ? 0.98 : 0.55))
                         .frame(maxWidth: .infinity, minHeight: 40)
-                        .background(hand == value ? Color.white.opacity(0.92) : .clear, in: Capsule())
                 }
-                .buttonStyle(.plain)
-                .accessibilityAddTraits(hand == value ? .isSelected : [])
+                .accessibilityAddTraits(isSelected ? .isSelected : [])
             }
         }
         .padding(4)
