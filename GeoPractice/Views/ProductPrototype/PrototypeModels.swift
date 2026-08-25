@@ -82,7 +82,6 @@ struct PrototypeGlassControlModifier: ViewModifier {
     let cornerRadius: CGFloat
 
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
-    @Environment(\.isEnabled) private var isEnabled
 
     @ViewBuilder
     func body(content: Content) -> some View {
@@ -99,7 +98,6 @@ struct PrototypeGlassControlModifier: ViewModifier {
             if #available(iOS 26.0, *) {
                 content
                     .glassEffect(.clear.interactive(), in: shape)
-                    .overlay { prismaticBorder }
             } else {
                 material(content)
             }
@@ -135,39 +133,10 @@ struct PrototypeGlassControlModifier: ViewModifier {
                     )
                     .allowsHitTesting(false)
             }
-            .overlay { prismaticBorder }
     }
 
     private var shape: RoundedRectangle {
         RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-    }
-
-    /// Clear Liquid Glass needs a changing scene behind it to expose the
-    /// system refraction. Navigation bars are deliberately quiet and dark, so
-    /// add the same restrained cyan / amber / magenta fringe visible around a
-    /// native Slider thumb. The neutral highlight remains dominant; this is a
-    /// lens edge, not a decorative rainbow border.
-    private var prismaticBorder: some View {
-        shape
-            .stroke(
-                AngularGradient(
-                    stops: [
-                        .init(color: Color.cyan.opacity(0.52), location: 0.00),
-                        .init(color: Color.white.opacity(0.30), location: 0.15),
-                        .init(color: Color.white.opacity(0.12), location: 0.43),
-                        .init(color: Color.yellow.opacity(0.38), location: 0.65),
-                        .init(color: Color.pink.opacity(0.42), location: 0.83),
-                        .init(color: Color.cyan.opacity(0.52), location: 1.00)
-                    ],
-                    center: .center,
-                    startAngle: .degrees(-155),
-                    endAngle: .degrees(205)
-                ),
-                lineWidth: 1.05
-            )
-            .blendMode(.plusLighter)
-            .opacity(isEnabled ? 1 : 0.26)
-            .allowsHitTesting(false)
     }
 }
 
@@ -178,7 +147,6 @@ struct PrototypeToolbarGlassLensModifier<LensShape: Shape>: ViewModifier {
     let shape: LensShape
 
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
-    @Environment(\.isEnabled) private var isEnabled
 
     @ViewBuilder
     func body(content: Content) -> some View {
@@ -195,7 +163,6 @@ struct PrototypeToolbarGlassLensModifier<LensShape: Shape>: ViewModifier {
             if #available(iOS 26.0, *) {
                 content
                     .glassEffect(.clear.interactive(), in: shape)
-                    .overlay { prismaticBorder }
             } else {
                 material(content)
             }
@@ -220,30 +187,66 @@ struct PrototypeToolbarGlassLensModifier<LensShape: Shape>: ViewModifier {
                     )
                     .allowsHitTesting(false)
             }
-            .overlay { prismaticBorder }
+    }
+}
+
+/// Selected segments use SwiftUI's native Liquid Glass button renderer—the
+/// same system-owned optical material family used by the native Slider thumb.
+/// No fill, tint or custom stroke is drawn on iOS 26.
+struct PrototypeGlassSelectionButtonModifier: ViewModifier {
+    let isSelected: Bool
+    let cornerRadius: CGFloat
+
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if !isSelected {
+            content.buttonStyle(.plain)
+        } else if reduceTransparency {
+            content
+                .buttonStyle(.plain)
+                .background(GeoTheme.panelRaised, in: shape)
+                .overlay {
+                    shape
+                        .stroke(Color.white.opacity(0.24), lineWidth: 1)
+                        .allowsHitTesting(false)
+                }
+        } else {
+#if compiler(>=6.2)
+            if #available(iOS 26.0, *) {
+                content
+                    .buttonStyle(.glass(.clear.interactive()))
+                    .buttonBorderShape(.roundedRectangle(radius: cornerRadius))
+            } else {
+                material(content)
+            }
+#else
+            material(content)
+#endif
+        }
     }
 
-    private var prismaticBorder: some View {
-        shape
-            .stroke(
-                AngularGradient(
-                    stops: [
-                        .init(color: Color.cyan.opacity(0.52), location: 0.00),
-                        .init(color: Color.white.opacity(0.30), location: 0.15),
-                        .init(color: Color.white.opacity(0.12), location: 0.43),
-                        .init(color: Color.yellow.opacity(0.38), location: 0.65),
-                        .init(color: Color.pink.opacity(0.42), location: 0.83),
-                        .init(color: Color.cyan.opacity(0.52), location: 1.00)
-                    ],
-                    center: .center,
-                    startAngle: .degrees(-155),
-                    endAngle: .degrees(205)
-                ),
-                lineWidth: 1.05
-            )
-            .blendMode(.plusLighter)
-            .opacity(isEnabled ? 1 : 0.26)
-            .allowsHitTesting(false)
+    private func material(_ content: Content) -> some View {
+        content
+            .buttonStyle(.plain)
+            .background(.ultraThinMaterial, in: shape)
+            .overlay {
+                shape
+                    .stroke(
+                        LinearGradient(
+                            colors: [Color.white.opacity(0.28), Color.white.opacity(0.06)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 1
+                    )
+                    .allowsHitTesting(false)
+            }
+    }
+
+    private var shape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
     }
 }
 
@@ -272,22 +275,18 @@ extension View {
         modifier(PrototypeToolbarGlassLensModifier(shape: shape))
     }
 
-    /// Active items inside a shared glass control remain translucent. This
-    /// replaces the old opaque white selection pills while keeping selection
-    /// unmistakable through a second, brighter lens edge.
-    @ViewBuilder
-    func prototypeGlassSelection(
+    /// Apply to the Button itself, not its label. This lets the native glass
+    /// button renderer own the complete selected geometry and interaction.
+    func prototypeGlassSelectionButton(
         _ isSelected: Bool,
         cornerRadius: CGFloat = 1_000
     ) -> some View {
-        if isSelected {
-            background {
-                Color.white.opacity(0.055)
-                    .prototypeGlassControl(cornerRadius: cornerRadius)
-            }
-        } else {
-            self
-        }
+        modifier(
+            PrototypeGlassSelectionButtonModifier(
+                isSelected: isSelected,
+                cornerRadius: cornerRadius
+            )
+        )
     }
 
     /// iOS 26 needs real content behind clear glass to expose refraction.
@@ -397,10 +396,9 @@ struct PrototypeGlassSegmentButton: View {
                 .minimumScaleFactor(0.72)
                 .frame(maxWidth: .infinity, minHeight: 44)
                 .padding(.horizontal, 5)
-                .prototypeGlassSelection(isActive, cornerRadius: 10)
-                .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .contentShape(Capsule())
         }
-        .buttonStyle(.plain)
+        .prototypeGlassSelectionButton(isActive)
         .accessibilityAddTraits(isActive ? .isSelected : [])
     }
 }

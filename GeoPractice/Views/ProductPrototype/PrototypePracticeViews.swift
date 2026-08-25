@@ -158,7 +158,6 @@ struct PrototypePracticeView: View {
                     .foregroundStyle(selectedFilter == filter ? GeoTheme.text : GeoTheme.muted)
                     .padding(.horizontal, 15)
                     .frame(minHeight: 42)
-                    .prototypeGlassSelection(selectedFilter == filter)
             }
         }
         .buttonStyle(LiquidPressButtonStyle())
@@ -697,9 +696,8 @@ private struct PrototypeSongHistoryView: View {
                         .font(.caption.weight(.bold))
                         .foregroundStyle(period == value ? GeoTheme.text : GeoTheme.muted)
                         .frame(maxWidth: .infinity, minHeight: 40)
-                        .prototypeGlassSelection(period == value)
                 }
-                .buttonStyle(.plain)
+                .prototypeGlassSelectionButton(period == value)
                 .accessibilityAddTraits(period == value ? .isSelected : [])
             }
         }
@@ -741,9 +739,8 @@ private struct PrototypeSongHistoryView: View {
                         .font(.caption.weight(.bold))
                         .foregroundStyle(hand == value ? GeoTheme.text : GeoTheme.muted)
                         .frame(maxWidth: .infinity, minHeight: 40)
-                        .prototypeGlassSelection(hand == value)
                 }
-                .buttonStyle(.plain)
+                .prototypeGlassSelectionButton(hand == value)
                 .accessibilityAddTraits(hand == value ? .isSelected : [])
             }
         }

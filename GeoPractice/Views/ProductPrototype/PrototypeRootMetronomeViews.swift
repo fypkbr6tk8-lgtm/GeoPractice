@@ -98,10 +98,9 @@ private struct ProductPrototypeTabBar: View {
                 .labelStyle(.titleAndIcon)
                 .foregroundStyle(selection == tab ? GeoTheme.text : GeoTheme.muted)
                 .frame(maxWidth: .infinity, minHeight: 44)
-                .prototypeGlassSelection(selection == tab)
                 .contentShape(Capsule())
         }
-        .buttonStyle(.plain)
+        .prototypeGlassSelectionButton(selection == tab)
         .accessibilityAddTraits(selection == tab ? .isSelected : [])
     }
 }
@@ -337,9 +336,8 @@ private struct PrototypeMetronomeView: View {
                     }
                     .foregroundStyle(selectedHand == hand ? GeoTheme.text : GeoTheme.muted)
                     .frame(maxWidth: .infinity, minHeight: 48)
-                    .prototypeGlassSelection(selectedHand == hand)
                 }
-                .buttonStyle(.plain)
+                .prototypeGlassSelectionButton(selectedHand == hand)
                 .accessibilityAddTraits(selectedHand == hand ? .isSelected : [])
             }
         }
