@@ -88,8 +88,7 @@ private struct ProductPrototypeTabBar: View {
         title: String,
         symbol: String
     ) -> some View {
-        let isSelected = selection == tab
-        return PrototypeGlassSegment(isSelected: isSelected) {
+        Button {
             withAnimation(.snappy(duration: 0.22)) {
                 selection = tab
             }
@@ -97,14 +96,30 @@ private struct ProductPrototypeTabBar: View {
             Label(title, systemImage: symbol)
                 .font(.system(size: 12, weight: .bold))
                 .labelStyle(.titleAndIcon)
-                .foregroundStyle(GeoTheme.text.opacity(isSelected ? 0.98 : 0.52))
+                .foregroundStyle(selection == tab ? .black : GeoTheme.text)
                 .frame(maxWidth: .infinity, minHeight: 44)
+                .background {
+                    if selection == tab {
+                        Capsule(style: .continuous)
+                            .fill(Color.white.opacity(0.92))
+                            .matchedGeometryEffectFallback(id: title)
+                    }
+                }
+                .contentShape(Capsule())
         }
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(selection == tab ? .isSelected : [])
     }
 }
 
 private extension View {
+    /// Keeps the prototype source compatible with all toolchains used by the
+    /// project while documenting the intended selection transition.
+    @ViewBuilder
+    func matchedGeometryEffectFallback(id: String) -> some View {
+        self
+    }
+
     func prototypeTabVisibility(_ isVisible: Bool) -> some View {
         opacity(isVisible ? 1 : 0)
             .allowsHitTesting(isVisible)
@@ -322,8 +337,7 @@ private struct PrototypeMetronomeView: View {
     private var handControl: some View {
         HStack(spacing: 4) {
             ForEach(PrototypePracticeHand.allCases) { hand in
-                let isSelected = selectedHand == hand
-                PrototypeGlassSegment(isSelected: isSelected) {
+                Button {
                     selectedHand = hand
                 } label: {
                     VStack(spacing: 2) {
@@ -332,10 +346,15 @@ private struct PrototypeMetronomeView: View {
                         Text(hand.title)
                             .font(.system(size: 9, weight: .semibold))
                     }
-                    .foregroundStyle(GeoTheme.text.opacity(isSelected ? 0.98 : 0.52))
+                    .foregroundStyle(selectedHand == hand ? .black : GeoTheme.text)
                     .frame(maxWidth: .infinity, minHeight: 48)
+                    .background(
+                        selectedHand == hand ? Color.white.opacity(0.92) : Color.clear,
+                        in: Capsule(style: .continuous)
+                    )
                 }
-                .accessibilityAddTraits(isSelected ? .isSelected : [])
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(selectedHand == hand ? .isSelected : [])
             }
         }
         .padding(4)

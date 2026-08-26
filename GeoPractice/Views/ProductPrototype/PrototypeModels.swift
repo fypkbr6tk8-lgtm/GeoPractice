@@ -1,53 +1,5 @@
 import Foundation
 import SwiftUI
-import UIKit
-
-/// Real Liquid Glass panel background built from an explicitly-constructed
-/// `_UIViewGlass` at variant 13 — found by enumerating `_UIViewGlass` via the
-/// Objective-C runtime and sweeping its `variant` values in
-/// ExperimentalGlassLab (see PrototypeStatisticsSettingsViews.swift). Public
-/// `.glassEffect(.regular)` only produces flat blur+tint (confirmed against
-/// a striped test backdrop — no edge refraction); this explicit-glass path
-/// is what actually reads as "liquid" rather than "frosted". Falls back to a
-/// plain effect-less view (fully transparent) if these private symbols ever
-/// disappear in a future OS — safe because callers already layer their own
-/// background/overlay/border on top.
-@available(iOS 26.0, *)
-private struct PrototypeGlassPanelBackground: UIViewRepresentable {
-    let cornerRadius: CGFloat
-    let tint: UIColor?
-
-    func makeUIView(context: Context) -> UIVisualEffectView {
-        let view = UIVisualEffectView(effect: buildEffect())
-        view.layer.cornerRadius = cornerRadius
-        view.layer.cornerCurve = .continuous
-        view.clipsToBounds = true
-        return view
-    }
-
-    func updateUIView(_ view: UIVisualEffectView, context: Context) {
-        view.effect = buildEffect()
-        view.layer.cornerRadius = cornerRadius
-    }
-
-    private func buildEffect() -> UIVisualEffect? {
-        guard let glassObj = makeViewGlass(variant: 13, size: 0, smoothness: 0, subdued: false) else {
-            return nil
-        }
-        glassObj.setValue(true, forKey: "contentLensing")
-        glassObj.setValue(false, forKey: "excludingControlLensing")
-        glassObj.setValue(false, forKey: "excludingControlDisplacement")
-        glassObj.setValue(true, forKey: "flexible")
-        if let tint {
-            glassObj.setValue(tint, forKey: "tintColor")
-        }
-
-        let sel = NSSelectorFromString("effectWithGlass:")
-        guard (UIGlassEffect.self as AnyObject).responds(to: sel) else { return nil }
-        return (UIGlassEffect.self as AnyObject).perform(sel, with: glassObj)?
-            .takeUnretainedValue() as? UIVisualEffect
-    }
-}
 
 /// Shared prototype-only glass treatment. It intentionally mirrors the
 /// floating tab bar: one translucent surface, a restrained highlight and a
@@ -71,26 +23,11 @@ struct PrototypeGlassSurfaceModifier: ViewModifier {
 #if compiler(>=6.2)
             if #available(iOS 26.0, *) {
                 content
-                    .background {
-                        PrototypeGlassPanelBackground(
-                            cornerRadius: cornerRadius,
-                            tint: UIColor.white.withAlphaComponent(emphasized ? 0.10 : 0.035)
-                        )
-                    }
-                    .overlay {
-                        shape
-                            .fill(
-                                LinearGradient(
-                                    colors: [
-                                        Color.white.opacity(emphasized ? 0.20 : 0.10),
-                                        Color.clear
-                                    ],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
-                            )
-                            .allowsHitTesting(false)
-                    }
+                    .background(Color.black.opacity(0.14), in: shape)
+                    .glassEffect(
+                        .regular.tint(Color.white.opacity(emphasized ? 0.16 : 0.025)),
+                        in: shape
+                    )
                     .overlay { border }
             } else {
                 material(content)
