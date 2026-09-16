@@ -1,20 +1,60 @@
+import Charts
 import SwiftUI
+
+enum PrototypeMonthDayLabel {
+    static func text(for date: Date, calendar: Calendar) -> String {
+        calendar.component(.day, from: date).formatted()
+    }
+}
+
+enum PrototypeWeeklyChartLayout {
+    static let height: CGFloat = 90
+    static let labelHeight: CGFloat = 16
+    static let labelSpacing: CGFloat = 6
+    static let minimumBarHeight: CGFloat = 8
+
+    static func barHeight(
+        count: Int,
+        maximumCount: Int,
+        availableHeight: CGFloat
+    ) -> CGFloat {
+        let plotHeight = max(0, availableHeight - labelHeight - labelSpacing)
+        guard plotHeight > 0 else { return 0 }
+        guard count > 0, maximumCount > 0 else {
+            return min(minimumBarHeight, plotHeight)
+        }
+
+        let ratio = min(1, max(0, CGFloat(count) / CGFloat(maximumCount)))
+        return min(plotHeight, max(minimumBarHeight, plotHeight * ratio))
+    }
+}
+
+enum PrototypePracticeSectionsLayout {
+    /// Keeps a long section list from taking over the song-detail page while
+    /// still leaving enough room to compare several section goals at once.
+    static let viewportHeight: CGFloat = 360
+}
 
 // MARK: - Practice browser
 
-/// Runnable, in-memory interpretation of the check-in product sketches.
-/// Nothing in this file reads or writes the production SwiftData models.
+/// Persisted practice library presented with the approved prototype layout.
 struct PrototypePracticeView: View {
     let onOpenMetronome: (PrototypePracticeLaunch) -> Void
 
-    @StateObject private var store = PrototypePracticeStore()
+    @ObservedObject private var store: PracticeLibraryStore
     @State private var query = ""
     @State private var showsSearch = false
     @State private var selectedFilter: PrototypePracticeFilter = .today
     @State private var showsNewSong = false
     @State private var showsArchive = false
+    @State private var pendingDeletion: PracticeSongSnapshot?
+    @State private var operationError: String?
 
-    init(onOpenMetronome: @escaping (PrototypePracticeLaunch) -> Void = { _ in }) {
+    init(
+        store: PracticeLibraryStore,
+        onOpenMetronome: @escaping (PrototypePracticeLaunch) -> Void = { _ in }
+    ) {
+        self.store = store
         self.onOpenMetronome = onOpenMetronome
     }
 
@@ -23,45 +63,77 @@ struct PrototypePracticeView: View {
             ZStack {
                 GeoBackground()
 
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 16) {
-                        prototypeNotice
-                        filterStrip
+                List {
+                    prototypeNotice
+                        .prototypePracticeListRow(top: 10, bottom: 6)
 
-                        if showsSearch {
-                            searchField
-                                .transition(.move(edge: .top).combined(with: .opacity))
-                        }
+                    filterStrip
+                        .prototypePracticeListRow(top: 0, bottom: 6)
 
-                        HStack(alignment: .firstTextBaseline) {
-                            Text(sectionTitle)
-                                .font(.title3.weight(.bold))
-                            Spacer()
-                            Text("\(visibleSections.count) 个练习段落")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(GeoTheme.muted)
-                        }
+                    if showsSearch {
+                        searchField
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                            .prototypePracticeListRow(top: 0, bottom: 6)
+                    }
 
-                        if visibleSections.isEmpty {
-                            emptyState
-                        } else {
-                            ForEach(visibleSections) { item in
-                                PrototypePracticeSectionCard(
-                                    song: item.song,
-                                    section: item.section,
-                                    onStart: {
-                                        onOpenMetronome(store.launch(song: item.song, section: item.section))
-                                    }
-                                )
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(sectionTitle)
+                            .font(.title3.weight(.bold))
+                        Spacer()
+                        Text("\(visibleSections.count) 个练习段落")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(GeoTheme.muted)
+                    }
+                    .prototypePracticeListRow(top: 0, bottom: 2)
+
+                    if visibleSections.isEmpty {
+                        emptyState
+                            .prototypePracticeListRow(top: 4, bottom: 24)
+                    } else {
+                        ForEach(visibleSections) { item in
+                            PrototypePracticeSectionCard(
+                                song: item.song,
+                                section: item.section,
+                                onStart: {
+                                    onOpenMetronome(store.launch(song: item.song, section: item.section))
+                                }
+                            )
+                            .prototypePracticeListRow(top: 4, bottom: 8)
+                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                // Do not give this pre-confirmation action a
+                                // destructive role. SwiftUI otherwise removes
+                                // the List row optimistically before the alert
+                                // has been confirmed, leaving the UI out of sync
+                                // when the user cancels.
+                                Button {
+                                    pendingDeletion = item.song
+                                } label: {
+                                    Label("删除", systemImage: "trash")
+                                }
+                                .tint(.red)
+
+                                Button {
+                                    archive(item.song)
+                                } label: {
+                                    Label("归档", systemImage: "archivebox")
+                                }
+                                .tint(.orange)
+                            }
+                            .accessibilityActions {
+                                Button("归档曲目") { archive(item.song) }
+                                Button("删除曲目") {
+                                    pendingDeletion = item.song
+                                }
                             }
                         }
+
+                        Color.clear
+                            .frame(height: 16)
+                            .prototypePracticeListRow(top: 0, bottom: 0)
                     }
-                    .frame(maxWidth: 760)
-                    .padding(.horizontal, 16)
-                    .padding(.top, 10)
-                    .padding(.bottom, 24)
-                    .frame(maxWidth: .infinity)
                 }
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
                 .scrollIndicators(.hidden)
             }
             .navigationTitle("打卡")
@@ -71,10 +143,7 @@ struct PrototypePracticeView: View {
                     Button {
                         withAnimation(.snappy(duration: 0.2)) { showsSearch.toggle() }
                     } label: {
-                        GeoGlassCapsule {
-                            Image(systemName: "magnifyingglass")
-                                .frame(width: 44, height: 44)
-                        }
+                        GeoToolbarIconLabel(symbol: "magnifyingglass")
                     }
                     .buttonStyle(LiquidPressButtonStyle())
                     .accessibilityLabel(showsSearch ? "收起搜索" : "搜索曲目和段落")
@@ -84,10 +153,7 @@ struct PrototypePracticeView: View {
                     Button {
                         showsArchive = true
                     } label: {
-                        GeoGlassCapsule {
-                            Image(systemName: "archivebox")
-                                .frame(width: 44, height: 44)
-                        }
+                        GeoToolbarIconLabel(symbol: "archivebox")
                     }
                     .buttonStyle(LiquidPressButtonStyle())
                     .accessibilityLabel("已归档曲目")
@@ -95,38 +161,75 @@ struct PrototypePracticeView: View {
                     Button {
                         showsNewSong = true
                     } label: {
-                        GeoGlassCapsule {
-                            Image(systemName: "plus")
-                                .frame(width: 44, height: 44)
-                        }
+                        GeoToolbarIconLabel(symbol: "plus")
                     }
                     .buttonStyle(LiquidPressButtonStyle())
                     .accessibilityLabel("新建曲目")
                 }
             }
-            .toolbarBackground(GeoTheme.background.opacity(0.94), for: .navigationBar)
+            .toolbarBackground(GeoTheme.background, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
-            .toolbarColorScheme(.dark, for: .navigationBar)
             .sheet(isPresented: $showsNewSong) {
                 PrototypeSongEditorView(store: store, songID: nil)
             }
             .sheet(isPresented: $showsArchive) {
                 PrototypeArchiveView(store: store)
             }
+            .prototypeSongDeletionAlert(song: $pendingDeletion) { song in
+                delete(song)
+            }
+            .alert("操作未完成", isPresented: Binding(
+                get: { operationError != nil },
+                set: { if !$0 { operationError = nil } }
+            )) {
+                Button("知道了", role: .cancel) {}
+            } message: {
+                Text(operationError ?? "")
+            }
+            .onChange(of: store.activeSongs.map(\.id)) { _, liveSongIDs in
+                if case .song(let selectedID) = selectedFilter,
+                   !liveSongIDs.contains(selectedID) {
+                    selectedFilter = .all
+                }
+            }
         }
         .environmentObject(store)
+    }
+
+    private func archive(_ song: PracticeSongSnapshot) {
+        do {
+            guard try store.setArchived(song.id, true) else { return }
+            resetFilterIfNeeded(afterRemoving: song.id)
+        } catch {
+            operationError = error.localizedDescription
+        }
+    }
+
+    private func delete(_ song: PracticeSongSnapshot) {
+        do {
+            guard try store.deleteSong(song.id) else { return }
+            resetFilterIfNeeded(afterRemoving: song.id)
+        } catch {
+            operationError = error.localizedDescription
+        }
+    }
+
+    private func resetFilterIfNeeded(afterRemoving songID: UUID) {
+        if case .song(let selectedID) = selectedFilter, selectedID == songID {
+            selectedFilter = .all
+        }
     }
 
     private var prototypeNotice: some View {
         HStack(spacing: 10) {
             Image(systemName: "wand.and.stars")
-            Text("交互原型 · 编辑、补录和计次只在本次运行中保留，不会写入正式数据。")
+            Text("曲目、段落、补录与练习历史都会保存在本机。")
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .font(.caption.weight(.semibold))
         .foregroundStyle(GeoTheme.muted)
         .padding(13)
-        .prototypeGlassSurface(cornerRadius: 16)
+        .geoCardSurface(cornerRadius: 16)
     }
 
     private var filterStrip: some View {
@@ -142,12 +245,19 @@ struct PrototypePracticeView: View {
                 Button {
                     showsNewSong = true
                 } label: {
-                    GeoGlassCapsule {
-                        Label("新建", systemImage: "plus")
-                            .font(.caption.weight(.bold))
-                            .padding(.horizontal, 14)
-                            .frame(minHeight: 42)
-                    }
+                    Label("新建", systemImage: "plus")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(GeoTheme.text)
+                        .padding(.horizontal, 14)
+                        .frame(minHeight: 42)
+                        .background(
+                            GeoTheme.panel,
+                            in: Capsule(style: .continuous)
+                        )
+                        .overlay {
+                            Capsule(style: .continuous)
+                                .stroke(GeoTheme.surfaceInk.opacity(0.08), lineWidth: 1)
+                        }
                 }
                 .buttonStyle(LiquidPressButtonStyle())
             }
@@ -160,17 +270,25 @@ struct PrototypePracticeView: View {
         Button {
             withAnimation(.snappy(duration: 0.2)) { selectedFilter = filter }
         } label: {
-            GeoGlassCapsule {
-                Text(title)
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(selectedFilter == filter ? .black : GeoTheme.text)
-                    .padding(.horizontal, 15)
-                    .frame(minHeight: 42)
-                    .background(
-                        selectedFilter == filter ? Color.white.opacity(0.92) : .clear,
-                        in: Capsule()
-                    )
-            }
+            Text(title)
+                .font(.caption.weight(.bold))
+                .foregroundStyle(
+                    selectedFilter == filter
+                        ? GeoTheme.selectionText
+                        : GeoTheme.text
+                )
+                .padding(.horizontal, 15)
+                .frame(minHeight: 42)
+                .background(
+                    selectedFilter == filter
+                        ? GeoTheme.selectionFill
+                        : GeoTheme.panel,
+                    in: Capsule(style: .continuous)
+                )
+                .overlay {
+                    Capsule(style: .continuous)
+                        .stroke(GeoTheme.surfaceInk.opacity(0.08), lineWidth: 1)
+                }
         }
         .buttonStyle(LiquidPressButtonStyle())
         .accessibilityAddTraits(selectedFilter == filter ? .isSelected : [])
@@ -205,7 +323,7 @@ struct PrototypePracticeView: View {
             let filterMatches: Bool
             switch selectedFilter {
             case .today:
-                filterMatches = item.section.completedCount > 0
+                filterMatches = store.hasAttemptToday(eventID: item.section.id)
             case .all:
                 filterMatches = true
             case .song(let id):
@@ -230,7 +348,7 @@ struct PrototypePracticeView: View {
     }
 
     private var emptyState: some View {
-        GeoCard(cornerRadius: 22) {
+        return GeoCard(cornerRadius: 22) {
             ContentUnavailableView {
                 Label("没有匹配的练习", systemImage: "music.note.list")
             } description: {
@@ -242,12 +360,12 @@ struct PrototypePracticeView: View {
 }
 
 private struct PrototypePracticeSectionCard: View {
-    let song: PrototypeMockSong
-    let section: PrototypeMockSection
+    let song: PracticeSongSnapshot
+    let section: PracticeSectionSnapshot
     let onStart: () -> Void
 
     var body: some View {
-        GeoCard(cornerRadius: 22) {
+        return GeoCard(cornerRadius: 22) {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .top, spacing: 12) {
                     VStack(alignment: .leading, spacing: 4) {
@@ -256,9 +374,15 @@ private struct PrototypePracticeSectionCard: View {
                         Text("\(song.name) · \(song.group)")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(GeoTheme.muted)
-                        Text("上次练习 \(section.lastPracticed.formatted(.relative(presentation: .named)))")
-                            .font(.caption2)
-                            .foregroundStyle(GeoTheme.muted)
+                        if let lastPracticed = section.lastPracticed {
+                            Text("上次练习 \(lastPracticed.formatted(.relative(presentation: .named)))")
+                                .font(.caption2)
+                                .foregroundStyle(GeoTheme.muted)
+                        } else {
+                            Text("尚未练习")
+                                .font(.caption2)
+                                .foregroundStyle(GeoTheme.muted)
+                        }
                     }
                     Spacer(minLength: 0)
                     Text(section.target.map { "\(section.completedCount)/\($0)" } ?? "\(section.completedCount) 次")
@@ -266,16 +390,6 @@ private struct PrototypePracticeSectionCard: View {
                         .lineLimit(1)
                         .minimumScaleFactor(0.68)
                 }
-
-                HStack(spacing: 8) {
-                    Label("\(section.bpm) BPM", systemImage: "metronome")
-                    Text("·")
-                    Text("\(section.beats) 拍")
-                    Text("·")
-                    Text(section.note)
-                }
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(GeoTheme.muted)
 
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 10) { actionButtons }
@@ -306,11 +420,18 @@ private struct PrototypePracticeSectionCard: View {
 // MARK: - Song detail
 
 private struct PrototypeSongDetailView: View {
-    @EnvironmentObject private var store: PrototypePracticeStore
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var store: PracticeLibraryStore
+    @EnvironmentObject private var subscriptionStore: SubscriptionStore
 
     let songID: UUID
     @State private var showsEditor = false
     @State private var showsBackfill = false
+    @State private var pendingDeletion: PracticeSongSnapshot?
+    @State private var operationError: String?
+    @State private var analysisSectionID: UUID?
+    @State private var analysisRange: PracticePieceAnalysisRange = .thirtyDays
+    @State private var analysisHand: PracticeHand = .both
 
     var body: some View {
         ZStack {
@@ -326,6 +447,8 @@ private struct PrototypeSongDetailView: View {
                         monthCard(song)
                         yearCard(song)
                         sectionsCard(song)
+                        analysisCard(song)
+                        deleteButton(song)
                     }
                     .frame(maxWidth: 760)
                     .padding(16)
@@ -344,9 +467,40 @@ private struct PrototypeSongDetailView: View {
                 ContentUnavailableView("曲目不存在", systemImage: "music.note")
             }
         }
+        .prototypeSongDeletionAlert(song: $pendingDeletion) { song in
+            do {
+                guard try store.deleteSong(song.id) else { return }
+                dismiss()
+            } catch {
+                operationError = error.localizedDescription
+            }
+        }
+        .alert("操作未完成", isPresented: Binding(
+            get: { operationError != nil },
+            set: { if !$0 { operationError = nil } }
+        )) {
+            Button("知道了", role: .cancel) {}
+        } message: {
+            Text(operationError ?? "")
+        }
     }
 
-    private func detailHeader(_ song: PrototypeMockSong) -> some View {
+    private func deleteButton(_ song: PracticeSongSnapshot) -> some View {
+        Button(role: .destructive) {
+            pendingDeletion = song
+        } label: {
+            Label("删除曲目", systemImage: "trash")
+                .font(.headline.weight(.bold))
+                .foregroundStyle(Color.red)
+                .frame(maxWidth: .infinity, minHeight: 54)
+                .contentShape(Rectangle())
+                .prototypeGlassSurface(cornerRadius: 18)
+        }
+        .buttonStyle(LiquidPressButtonStyle())
+        .accessibilityHint("删除前会再次要求确认")
+    }
+
+    private func detailHeader(_ song: PracticeSongSnapshot) -> some View {
         VStack(spacing: 5) {
             Text(song.name)
                 .font(.system(size: 28, weight: .black, design: .rounded))
@@ -384,81 +538,111 @@ private struct PrototypeSongDetailView: View {
         .buttonStyle(.plain)
     }
 
-    private func overview(_ song: PrototypeMockSong) -> some View {
+    private func overview(_ song: PracticeSongSnapshot) -> some View {
         let records = store.records(for: song.id)
-        let count = records.reduce(0) { $0 + $1.count }
-        let duration = records.reduce(0.0) { $0 + $1.duration }
+        let count = records.reduce(0) { $0 + $1.totalCount }
+        let durationMilliseconds = records.reduce(Int64(0)) { partial, record in
+            let (sum, overflowed) = partial.addingReportingOverflow(record.totalDurationMilliseconds)
+            return overflowed ? Int64.max : sum
+        }
         return GeoCard(cornerRadius: 22) {
             VStack(alignment: .leading, spacing: 14) {
                 Text("总览").font(.headline.weight(.bold))
                 HStack(spacing: 8) {
                     PrototypeDetailMetric(title: "练习次数", value: count.formatted())
                     PrototypeDetailMetric(title: "练习天数", value: store.activeDays(for: song.id).formatted())
-                    PrototypeDetailMetric(title: "总时长", value: prototypePracticeDuration(duration))
+                    PrototypeDetailMetric(
+                        title: "总时长",
+                        value: prototypePracticeDuration(Double(durationMilliseconds) / 1_000)
+                    )
                 }
             }
         }
     }
 
-    private func weekCard(_ song: PrototypeMockSong) -> some View {
-        GeoCard(cornerRadius: 22) {
+    private func weekCard(_ song: PracticeSongSnapshot) -> some View {
+        let counts = store.weekCounts(for: song.id)
+        let maximumCount = counts.max() ?? 0
+        return GeoCard(cornerRadius: 22) {
             VStack(alignment: .leading, spacing: 16) {
                 Text("周统计 · 最近 7 天").font(.headline.weight(.bold))
-                HStack(alignment: .bottom, spacing: 9) {
-                    ForEach(Array(store.weekCounts(for: song.id).enumerated()), id: \.offset) { index, value in
-                        VStack(spacing: 6) {
-                            RoundedRectangle(cornerRadius: 5)
-                                .fill(Color.white.opacity(value > 0 ? 0.82 : 0.10))
-                                .frame(height: max(8, CGFloat(value) * 4))
-                            Text("\(index + 1)")
-                                .font(.caption2.monospacedDigit())
-                                .foregroundStyle(GeoTheme.muted)
+                GeometryReader { proxy in
+                    HStack(alignment: .bottom, spacing: 9) {
+                        ForEach(Array(counts.enumerated()), id: \.offset) { index, value in
+                            VStack(spacing: PrototypeWeeklyChartLayout.labelSpacing) {
+                                RoundedRectangle(cornerRadius: 5)
+                                    .fill(GeoTheme.surfaceInk.opacity(value > 0 ? 0.82 : 0.10))
+                                    .frame(height: PrototypeWeeklyChartLayout.barHeight(
+                                        count: value,
+                                        maximumCount: maximumCount,
+                                        availableHeight: proxy.size.height
+                                    ))
+                                Text("\(index + 1)")
+                                    .font(.caption2.monospacedDigit())
+                                    .foregroundStyle(GeoTheme.muted)
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.7)
+                                    .frame(height: PrototypeWeeklyChartLayout.labelHeight)
+                            }
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                         }
-                        .frame(maxWidth: .infinity)
                     }
+                    .frame(width: proxy.size.width, height: proxy.size.height, alignment: .bottom)
+                    .clipped()
                 }
-                .frame(height: 90, alignment: .bottom)
-                Text("Mock 柱形仅用于确认周统计的展示位置。")
-                    .font(.caption2)
-                    .foregroundStyle(GeoTheme.muted)
+                .frame(height: PrototypeWeeklyChartLayout.height)
             }
         }
     }
 
-    private func monthCard(_ song: PrototypeMockSong) -> some View {
-        GeoCard(cornerRadius: 22) {
+    private func monthCard(_ song: PracticeSongSnapshot) -> some View {
+        let calendar = Calendar.autoupdatingCurrent
+        let days = PracticeStatisticsEngine.monthCalendar(
+            records: store.records(for: song.id),
+            month: .now,
+            calendar: calendar
+        )
+        return GeoCard(cornerRadius: 22) {
             VStack(alignment: .leading, spacing: 14) {
                 Text("月统计 · \(Date.now.formatted(.dateTime.month(.wide)))")
                     .font(.headline.weight(.bold))
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 7), spacing: 6) {
-                    ForEach(1...28, id: \.self) { day in
-                        let active = (day + song.sections.count) % 4 != 0
-                        Text("\(day)")
+                    ForEach(days) { day in
+                        Text(PrototypeMonthDayLabel.text(for: day.date, calendar: calendar))
                             .font(.caption2.monospacedDigit().weight(.semibold))
-                            .foregroundStyle(active ? .black : GeoTheme.muted)
+                            .foregroundStyle(
+                                day.isActive ? GeoTheme.background : GeoTheme.muted
+                            )
                             .frame(maxWidth: .infinity, minHeight: 30)
-                            .background(active ? Color.white.opacity(0.84) : Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
+                            .background(
+                                GeoTheme.surfaceInk.opacity(day.isActive ? 0.84 : 0.05),
+                                in: RoundedRectangle(cornerRadius: 8)
+                            )
+                            .opacity(day.isInDisplayedMonth ? 1 : 0.34)
                     }
                 }
-                Text("月历为布局示例，不代表正式统计结果。")
-                    .font(.caption2)
-                    .foregroundStyle(GeoTheme.muted)
             }
         }
     }
 
-    private func yearCard(_ song: PrototypeMockSong) -> some View {
-        GeoCard(cornerRadius: 22) {
+    private func yearCard(_ song: PracticeSongSnapshot) -> some View {
+        let buckets = PracticeStatisticsEngine.yearBuckets(
+            records: store.records(for: song.id),
+            year: .now,
+            calendar: .autoupdatingCurrent
+        )
+        let maximum = max(1, buckets.map(\.totalCount).max() ?? 1)
+        return GeoCard(cornerRadius: 22) {
             VStack(alignment: .leading, spacing: 14) {
                 Text("年统计 · \(Date.now.formatted(.dateTime.year()))")
                     .font(.headline.weight(.bold))
                 HStack(alignment: .bottom, spacing: 5) {
-                    ForEach(1...12, id: \.self) { month in
+                    ForEach(buckets) { month in
                         VStack(spacing: 5) {
                             Capsule()
-                                .fill(Color.white.opacity(0.18 + Double((month + song.sections.count) % 6) * 0.10))
-                                .frame(height: CGFloat(12 + ((month * 11) % 54)))
-                            Text("\(month)")
+                                .fill(GeoTheme.surfaceInk.opacity(month.isActive ? 0.78 : 0.12))
+                                .frame(height: max(8, CGFloat(month.totalCount) / CGFloat(maximum) * 62))
+                            Text("\(month.month)")
                                 .font(.system(size: 7, weight: .semibold))
                                 .foregroundStyle(GeoTheme.muted)
                         }
@@ -470,25 +654,470 @@ private struct PrototypeSongDetailView: View {
         }
     }
 
-    private func sectionsCard(_ song: PrototypeMockSong) -> some View {
+    private func sectionsCard(_ song: PracticeSongSnapshot) -> some View {
         GeoCard(cornerRadius: 22) {
-            VStack(alignment: .leading, spacing: 13) {
+            VStack(alignment: .leading, spacing: 16) {
                 Text("练习段落").font(.headline.weight(.bold))
-                ForEach(song.sections) { section in
-                    HStack {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(section.name).font(.subheadline.weight(.bold))
-                            Text("\(section.bpm) BPM · \(section.beats) 拍 · \(section.note)")
-                                .font(.caption)
-                                .foregroundStyle(GeoTheme.muted)
+                ScrollView(.vertical) {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(song.sections) { section in
+                            let isSelected = selectedAnalysisSection(in: song)?.id == section.id
+                            let report = PracticeSectionBreakdownStatistics.report(
+                                section: section,
+                                song: song,
+                                records: store.records(forEventID: section.id)
+                            )
+
+                            Button {
+                                withAnimation(.snappy(duration: 0.22)) {
+                                    analysisSectionID = section.id
+                                }
+                            } label: {
+                                VStack(alignment: .leading, spacing: 10) {
+                                    HStack(alignment: .firstTextBaseline, spacing: 9) {
+                                        Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                                            .foregroundStyle(
+                                                isSelected ? GeoTheme.controlAccent : GeoTheme.muted
+                                            )
+                                        Text(section.name)
+                                            .font(.subheadline.weight(.bold))
+                                        Spacer(minLength: 8)
+                                        sectionProgress(section)
+                                    }
+
+                                    if report.totalCount == 0 {
+                                        Text("本周期尚未练习")
+                                            .font(.caption)
+                                            .foregroundStyle(GeoTheme.muted)
+                                    } else {
+                                        VStack(alignment: .leading, spacing: 8) {
+                                            ForEach(Array(report.configurations.enumerated()), id: \.element.id) { index, breakdown in
+                                                VStack(alignment: .leading, spacing: 2) {
+                                                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                                        Text("\(index + 1). \(PrototypePracticeHand(breakdown.hand).title)")
+                                                            .fontWeight(.bold)
+                                                        Spacer(minLength: 8)
+                                                        Text("\(breakdown.bpmRangeTitle) · \(breakdown.count) 次")
+                                                            .monospacedDigit()
+                                                    }
+                                                    Text("\(breakdown.beats) 拍 · \(breakdown.subdivisionTitle)")
+                                                        .foregroundStyle(GeoTheme.muted)
+                                                }
+                                                .font(.caption)
+                                            }
+
+                                            ForEach(Array(report.unavailableConfigurations.enumerated()), id: \.element.id) { index, unavailable in
+                                                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                                    Text("\(report.configurations.count + index + 1). \(PrototypePracticeHand(unavailable.hand).title)")
+                                                        .fontWeight(.bold)
+                                                    Spacer(minLength: 8)
+                                                    Text("\(unavailable.title) · \(unavailable.count) 次")
+                                                        .monospacedDigit()
+                                                        .foregroundStyle(GeoTheme.muted)
+                                                }
+                                                .font(.caption)
+                                            }
+                                        }
+                                    }
+                                }
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 10)
+                                .contentShape(Rectangle())
+                                .background(
+                                    isSelected ? GeoTheme.panelRaised.opacity(0.72) : .clear,
+                                    in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                )
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityAddTraits(isSelected ? .isSelected : [])
+                            .accessibilityHint("选择后查看该段落的曲目分析")
+
+                            if section.id != song.sections.last?.id {
+                                Divider().overlay(GeoTheme.surfaceInk.opacity(0.12))
+                            }
                         }
-                        Spacer()
-                        Text(section.target.map { "\(section.completedCount)/\($0)" } ?? "\(section.completedCount)")
-                            .font(.subheadline.monospacedDigit().weight(.black))
                     }
-                    .padding(.vertical, 4)
+                }
+                .frame(height: PrototypePracticeSectionsLayout.viewportHeight)
+                .scrollIndicators(.visible)
+                .scrollBounceBehavior(.basedOnSize)
+                .accessibilityIdentifier("practice-sections-scroll")
+            }
+        }
+    }
+
+    private func analysisCard(_ song: PracticeSongSnapshot) -> some View {
+        return GeoCard(cornerRadius: 22) {
+            VStack(alignment: .leading, spacing: 18) {
+                switch subscriptionStore.accessState {
+                case .checking:
+                    HStack(spacing: 12) {
+                        ProgressView()
+                        Text("正在核对专业版权益…")
+                            .font(.subheadline.weight(.semibold))
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 84)
+                case .notEntitled:
+                    PrototypeProFeatureUpsell(
+                        title: "曲目分析",
+                        detail: "解锁速度表现、成长趋势和左右手对比。",
+                        systemImage: "chart.xyaxis.line"
+                    )
+                case .entitled:
+                    if let section = selectedAnalysisSection(in: song) {
+                        let analysis = PracticePieceAnalysisEngine.analyze(
+                            records: store.records(forEventID: section.id),
+                            target: PracticePieceAnalysisTarget(
+                                sectionID: section.id,
+                                preset: section.preset
+                            ),
+                            range: analysisRange,
+                            hand: analysisHand
+                        )
+
+                        Label("曲目分析", systemImage: "chart.xyaxis.line")
+                            .font(.headline.weight(.bold))
+                        Text(section.name)
+                            .font(.title3.weight(.black))
+                            .foregroundStyle(GeoTheme.controlAccent)
+                            .lineLimit(1)
+
+                        analysisRangePicker
+                        analysisHandPicker
+                        analysisSpeedPerformance(analysis.speedPerformance)
+                        Divider().overlay(GeoTheme.surfaceInk.opacity(0.10))
+                        analysisHands(analysis.handComparison)
+                        Divider().overlay(GeoTheme.surfaceInk.opacity(0.10))
+                        analysisTrendAndGrowth(analysis)
+
+                        Label(
+                            "说明：速度数据均按四分音符等效 BPM 换算",
+                            systemImage: "info.circle"
+                        )
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(GeoTheme.muted)
+                    } else {
+                        Label("暂无练习段落", systemImage: "music.note.list")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(GeoTheme.muted)
+                            .frame(maxWidth: .infinity, minHeight: 84)
+                    }
                 }
             }
+        }
+    }
+
+    private func selectedAnalysisSection(
+        in song: PracticeSongSnapshot
+    ) -> PracticeSectionSnapshot? {
+        if let analysisSectionID,
+           let selected = song.sections.first(where: { $0.id == analysisSectionID }) {
+            return selected
+        }
+        return song.sections.first
+    }
+
+    private var analysisRangePicker: some View {
+        GeoSegmentContainer {
+            ForEach(PracticePieceAnalysisTrendRange.allCases) { range in
+                GeoSegmentButton(
+                    title: range.title.replacingOccurrences(of: " ", with: ""),
+                    isActive: analysisRange == range,
+                    activeForeground: GeoTheme.controlAccent
+                ) {
+                    withAnimation(.snappy(duration: 0.2)) {
+                        analysisRange = range
+                    }
+                }
+            }
+        }
+    }
+
+    private var analysisHandPicker: some View {
+        GeoSegmentContainer {
+            ForEach(PracticeHand.controlOrder) { hand in
+                GeoSegmentButton(
+                    title: hand.title,
+                    isActive: analysisHand == hand,
+                    activeForeground: GeoTheme.controlAccent
+                ) {
+                    withAnimation(.snappy(duration: 0.2)) {
+                        analysisHand = hand
+                    }
+                }
+            }
+        }
+    }
+
+    private func analysisSpeedPerformance(
+        _ performance: PracticePieceAnalysisSpeedPerformance
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("速度表现")
+                .font(.subheadline.weight(.bold))
+
+            HStack(spacing: 8) {
+                PrototypeAnalysisMetric(
+                    title: "最高速度",
+                    value: analysisBPMText(performance.maximumBPM)
+                )
+                PrototypeAnalysisMetric(
+                    title: "平均速度",
+                    value: analysisAverageBPMText(performance.weightedAverageBPM)
+                )
+                PrototypeAnalysisMetric(
+                    title: "稳定速度",
+                    value: analysisBPMText(performance.stableBPM)
+                )
+            }
+        }
+    }
+
+    private func analysisHands(
+        _ comparison: PracticePieceAnalysisHandComparison
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("左右手分析")
+                    .font(.subheadline.weight(.bold))
+                Spacer()
+                if let slowerHand = comparison.slowerHand {
+                    Text("较慢侧 · \(PrototypePracticeHand(slowerHand).title)")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(GeoTheme.muted)
+                }
+            }
+
+            HStack(spacing: 8) {
+                PrototypeAnalysisMetric(
+                    title: "左手速度",
+                    value: analysisBPMText(comparison.leftMaximumBPM)
+                )
+                PrototypeAnalysisMetric(
+                    title: "右手速度",
+                    value: analysisBPMText(comparison.rightMaximumBPM)
+                )
+                PrototypeAnalysisMetric(
+                    title: "左右手差值",
+                    value: analysisDifferenceText(comparison)
+                )
+            }
+        }
+    }
+
+    private func analysisTrendAndGrowth(_ analysis: PracticePieceAnalysis) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("速度趋势与成长")
+                .font(.subheadline.weight(.bold))
+
+            HStack(spacing: 12) {
+                Image(systemName: analysisGrowthSymbol(analysis.growth.percentage))
+                    .font(.title3.weight(.bold))
+                    .foregroundStyle(
+                        analysis.growth.percentage == nil
+                            ? GeoTheme.muted
+                            : GeoTheme.controlAccent
+                    )
+                    .frame(width: 28)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("成长/变化")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(GeoTheme.muted)
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(analysisChangeText(analysis.growth.changeBPM))
+                            .font(.title3.monospacedDigit().weight(.black))
+                        if analysis.growth.changeBPM != nil,
+                           let percentage = analysis.growth.percentage {
+                            Text(analysisGrowthText(percentage))
+                                .font(.caption.monospacedDigit().weight(.semibold))
+                                .foregroundStyle(GeoTheme.muted)
+                        }
+                    }
+                    if let current = analysis.growth.currentMaximumBPM,
+                       let previous = analysis.growth.comparisonMaximumBPM {
+                        Text(
+                            "本周期 \(analysisBPMText(current)) · 上一周期 \(analysisBPMText(previous))"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(GeoTheme.muted)
+                    } else {
+                        Text("暂无上一周期可比较数据")
+                            .font(.caption)
+                            .foregroundStyle(GeoTheme.muted)
+                    }
+                }
+            }
+            .padding(13)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                GeoTheme.panelRaised.opacity(0.72),
+                in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+            )
+
+            Text("趋势折线图")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(GeoTheme.muted)
+            PrototypePieceSpeedTrendChart(points: analysis.trendPoints)
+        }
+    }
+
+    private func analysisBPMText(_ value: Double?) -> String {
+        value.map { "\(analysisNumberText($0)) BPM" } ?? "—"
+    }
+
+    private func analysisAverageBPMText(_ value: Double?) -> String {
+        guard let value, value.isFinite else { return "—" }
+        return String(format: "%.1f BPM", value)
+    }
+
+    private func analysisGrowthText(_ value: Double?) -> String {
+        guard let value, value.isFinite else { return "—" }
+        return String(format: "%+.1f%%", value)
+    }
+
+    private func analysisChangeText(_ value: Double?) -> String {
+        guard let value, value.isFinite else { return "—" }
+        let prefix = value > 0 ? "+" : ""
+        return "\(prefix)\(analysisNumberText(value)) BPM"
+    }
+
+    private func analysisGrowthSymbol(_ value: Double?) -> String {
+        guard let value else { return "minus" }
+        if value > 0 { return "arrow.up.right" }
+        if value < 0 { return "arrow.down.right" }
+        return "arrow.right"
+    }
+
+    private func analysisDifferenceText(
+        _ comparison: PracticePieceAnalysisHandComparison
+    ) -> String {
+        guard let difference = comparison.absoluteDifferenceBPM,
+              let percentage = comparison.differencePercentage,
+              percentage.isFinite
+        else { return "—" }
+        return String(
+            format: "%@ BPM · %.1f%%",
+            analysisNumberText(difference),
+            percentage
+        )
+    }
+
+    private func analysisNumberText(_ value: Double) -> String {
+        guard value.isFinite else { return "—" }
+        let rounded = (value * 100).rounded() / 100
+        if rounded == rounded.rounded() {
+            return String(format: "%.0f", rounded)
+        }
+        if rounded * 10 == (rounded * 10).rounded() {
+            return String(format: "%.1f", rounded)
+        }
+        return String(format: "%.2f", rounded)
+    }
+
+    @ViewBuilder
+    private func sectionProgress(_ section: PracticeSectionSnapshot) -> some View {
+        if let progress = section.goalProgress {
+            let target = progress.targets.total
+            let completed = progress.completed.total
+            let percentage = min(100, max(0, Int((progress.completionRate * 100).rounded())))
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    Text("完成 \(percentage)%")
+                        .foregroundStyle(GeoTheme.muted)
+                    Text("\(completed)/\(target)")
+                }
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text("完成 \(percentage)%")
+                        .foregroundStyle(GeoTheme.muted)
+                    Text("\(completed)/\(target)")
+                }
+            }
+            .font(.subheadline.monospacedDigit().weight(.black))
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(
+                "完成度百分之\(percentage)，已完成\(completed)，目标\(target)"
+            )
+        } else {
+            Text("\(section.completedCount) 次")
+                .font(.subheadline.monospacedDigit().weight(.black))
+                .accessibilityLabel("已完成 \(section.completedCount) 次，未设置目标")
+        }
+    }
+}
+
+private struct PrototypeAnalysisMetric: View {
+    let title: String
+    let value: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(title)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(GeoTheme.muted)
+                .lineLimit(2)
+            Text(value)
+                .font(.system(.subheadline, design: .rounded, weight: .black))
+                .monospacedDigit()
+                .foregroundStyle(GeoTheme.text)
+                .lineLimit(2)
+                .minimumScaleFactor(0.68)
+        }
+        .frame(maxWidth: .infinity, minHeight: 68, alignment: .leading)
+        .padding(.horizontal, 11)
+        .padding(.vertical, 8)
+        .background(
+            GeoTheme.panelRaised.opacity(0.72),
+            in: RoundedRectangle(cornerRadius: 13, style: .continuous)
+        )
+        .accessibilityElement(children: .combine)
+    }
+}
+
+private struct PrototypePieceSpeedTrendChart: View {
+    let points: [PracticePieceAnalysisTrendPoint]
+
+    var body: some View {
+        if points.isEmpty {
+            Text("该范围内暂无速度记录")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(GeoTheme.muted)
+                .frame(maxWidth: .infinity, minHeight: 132)
+        } else {
+            Chart(points, id: \.date) { point in
+                LineMark(
+                    x: .value("日期", point.date),
+                    y: .value("速度", point.maximumBPM)
+                )
+                .foregroundStyle(GeoTheme.controlAccent)
+                .lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
+
+                PointMark(
+                    x: .value("日期", point.date),
+                    y: .value("速度", point.maximumBPM)
+                )
+                .foregroundStyle(GeoTheme.controlAccent)
+                .symbolSize(28)
+            }
+            .chartLegend(.hidden)
+            .chartXAxis {
+                AxisMarks(values: .automatic(desiredCount: 3)) {
+                    AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5))
+                        .foregroundStyle(GeoTheme.surfaceInk.opacity(0.08))
+                    AxisValueLabel()
+                        .foregroundStyle(GeoTheme.muted)
+                }
+            }
+            .chartYAxis {
+                AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) {
+                    AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5))
+                        .foregroundStyle(GeoTheme.surfaceInk.opacity(0.08))
+                    AxisValueLabel()
+                        .foregroundStyle(GeoTheme.muted)
+                }
+            }
+            .frame(height: 160)
+            .accessibilityLabel("速度趋势")
         }
     }
 }
@@ -497,20 +1126,27 @@ private struct PrototypeSongDetailView: View {
 
 private struct PrototypeSongEditorView: View {
     @Environment(\.dismiss) private var dismiss
-    @ObservedObject var store: PrototypePracticeStore
+    @ObservedObject var store: PracticeLibraryStore
     let songID: UUID?
+
+    @AppStorage(PracticePreferenceKeys.defaultBPM)
+    private var defaultBPM = PracticePreferencePolicy.defaultBPM
+    @AppStorage(PracticePreferenceKeys.defaultBeats)
+    private var defaultBeats = PracticePreferencePolicy.defaultBeats
 
     @State private var name = ""
     @State private var group = "未分组"
-    @State private var sectionNames: [String] = ["第一段"]
+    @State private var sectionDrafts: [PracticeSectionDraft] = [
+        PracticeSectionDraft(name: "第一段")
+    ]
     @State private var leftGoal = 10
     @State private var rightGoal = 10
     @State private var bothGoal = 10
-    @State private var multiplier = 1
     @State private var resetsDaily = true
     @State private var endDate = Calendar.current.date(byAdding: .month, value: 1, to: .now) ?? .now
     @State private var archived = false
     @State private var didLoad = false
+    @State private var saveError: String?
 
     var body: some View {
         NavigationStack {
@@ -521,22 +1157,24 @@ private struct PrototypeSongEditorView: View {
                 }
 
                 Section("练习段落") {
-                    ForEach(sectionNames.indices, id: \.self) { index in
+                    ForEach($sectionDrafts) { $draft in
                         HStack {
-                            TextField("段落 \(index + 1)", text: $sectionNames[index])
-                            if sectionNames.count > 1 {
+                            TextField("段落名称", text: $draft.name)
+                            if sectionDrafts.count > 1 {
                                 Button(role: .destructive) {
-                                    sectionNames.remove(at: index)
+                                    sectionDrafts.removeAll { $0.id == draft.id }
                                 } label: {
                                     Image(systemName: "minus.circle")
                                 }
                                 .buttonStyle(.plain)
-                                .accessibilityLabel("删除段落 \(index + 1)")
+                                .accessibilityLabel("删除段落 \(draft.name)")
                             }
                         }
                     }
                     Button {
-                        sectionNames.append("第\(sectionNames.count + 1)段")
+                        sectionDrafts.append(
+                            PracticeSectionDraft(name: "第\(sectionDrafts.count + 1)段")
+                        )
                     } label: {
                         Label("增加段落", systemImage: "plus")
                     }
@@ -548,26 +1186,29 @@ private struct PrototypeSongEditorView: View {
                     Stepper("合手目标 \(bothGoal)", value: $bothGoal, in: 0...999)
                 }
 
-                Section("计数与周期") {
-                    Stepper("每次记录次数 ×\(multiplier)", value: $multiplier, in: 1...20)
+                Section("周期") {
                     Toggle("每日重置", isOn: $resetsDaily)
+                        .tint(GeoTheme.controlAccent)
                     DatePicker("结束日期", selection: $endDate, displayedComponents: .date)
                 }
 
                 if songID != nil {
                     Section {
                         Toggle("归档曲目", isOn: $archived)
+                            .tint(GeoTheme.controlAccent)
                     } footer: {
                         Text("归档后不会出现在打卡首页，可从归档入口恢复。")
                     }
                 }
 
                 Section {
-                    Text("Mock 编辑仅用于确认字段与跳转；正式的数据约束和迁移将在 UI 通过后实现。")
+                    Text("段落改名会保留原有练习历史；删除段落会同时清除该段落的历史与目标。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(GeoTheme.background)
             .navigationTitle(songID == nil ? "新建曲目" : "编辑曲目")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -576,26 +1217,50 @@ private struct PrototypeSongEditorView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("保存") {
-                        store.saveSong(
-                            id: songID,
-                            name: name,
-                            group: group,
-                            sectionNames: sectionNames,
-                            leftGoal: leftGoal,
-                            rightGoal: rightGoal,
-                            bothGoal: bothGoal,
-                            multiplier: multiplier,
-                            resetsDaily: resetsDaily,
-                            endDate: endDate,
-                            archived: archived
-                        )
-                        dismiss()
+                        save()
                     }
                     .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
         }
         .onAppear(perform: loadIfNeeded)
+        .alert("保存失败", isPresented: Binding(
+            get: { saveError != nil },
+            set: { if !$0 { saveError = nil } }
+        )) {
+            Button("知道了", role: .cancel) {}
+        } message: {
+            Text(saveError ?? "")
+        }
+    }
+
+    private func save() {
+        do {
+            _ = try store.saveSong(
+                id: songID,
+                name: name,
+                group: group,
+                sections: sectionDrafts,
+                leftGoal: leftGoal,
+                rightGoal: rightGoal,
+                bothGoal: bothGoal,
+                multiplier: 1,
+                resetsDaily: resetsDaily,
+                endDate: endDate,
+                archived: archived,
+                newSectionPreset: MetronomePreset(
+                    bpm: PracticePreferencePolicy.normalizedBPM(defaultBPM),
+                    beats: PracticePreferencePolicy.normalizedBeats(defaultBeats),
+                    subdivision: MetronomePreset.standard.subdivision,
+                    direction: MetronomePreset.standard.direction,
+                    grouping: MetronomePreset.standard.grouping,
+                    referenceNoteRaw: MetronomePreset.standard.referenceNoteRaw
+                ).normalized
+            )
+            dismiss()
+        } catch {
+            saveError = error.localizedDescription
+        }
     }
 
     private func loadIfNeeded() {
@@ -604,11 +1269,12 @@ private struct PrototypeSongEditorView: View {
         guard let songID, let song = store.song(id: songID) else { return }
         name = song.name
         group = song.group
-        sectionNames = song.sections.map(\.name)
+        sectionDrafts = song.sections.map {
+            PracticeSectionDraft(id: $0.id, name: $0.name)
+        }
         leftGoal = song.leftGoal
         rightGoal = song.rightGoal
         bothGoal = song.bothGoal
-        multiplier = song.multiplier
         resetsDaily = song.resetsDaily
         endDate = song.endDate
         archived = song.isArchived
@@ -617,13 +1283,40 @@ private struct PrototypeSongEditorView: View {
 
 // MARK: - History and backfill
 
+private enum PrototypeHistoryEditTarget: Identifiable {
+    enum ID: Hashable {
+        case record(UUID)
+        case completion(UUID)
+        case unitemized(PracticeHistoryUnitemizedCompletionSummary.ID)
+    }
+
+    case record(PracticeHistoryRecordSnapshot)
+    case completion(
+        record: PracticeHistoryRecordSnapshot,
+        completion: PracticeHistoryCompletionEntry
+    )
+    case unitemized(
+        record: PracticeHistoryRecordSnapshot,
+        summary: PracticeHistoryUnitemizedCompletionSummary
+    )
+
+    var id: ID {
+        switch self {
+        case .record(let record): .record(record.id)
+        case .completion(_, let completion): .completion(completion.id)
+        case .unitemized(_, let summary): .unitemized(summary.id)
+        }
+    }
+}
+
 private struct PrototypeSongHistoryView: View {
-    @EnvironmentObject private var store: PrototypePracticeStore
+    @EnvironmentObject private var store: PracticeLibraryStore
     let songID: UUID
 
     @State private var period: PrototypeHistoryPeriod = .week
     @State private var anchorDate = Date.now
-    @State private var hand: PrototypePracticeHand = .left
+    @State private var hand: PrototypeHistoryHandFilter = .all
+    @State private var editTarget: PrototypeHistoryEditTarget?
 
     var body: some View {
         ZStack {
@@ -636,48 +1329,36 @@ private struct PrototypeSongHistoryView: View {
                             dateControl
                             handControl
                         }
+                        .frame(maxWidth: .infinity)
                     }
+                    .frame(maxWidth: .infinity)
 
-                    if groupedRecords.isEmpty {
+                    if groupedSessions.isEmpty {
                         GeoCard(cornerRadius: 20) {
                             ContentUnavailableView {
                                 Label("该范围暂无记录", systemImage: "clock")
                             } description: {
-                                Text("切换时间范围或手型可查看其他 Mock 记录。")
+                                Text("切换时间范围或手型可查看其他练习记录。")
                             }
                             .frame(maxWidth: .infinity, minHeight: 180)
                         }
+                        .frame(maxWidth: .infinity)
                     } else {
-                        ForEach(groupedRecords, id: \.day) { group in
+                        ForEach(groupedSessions, id: \.day) { group in
                             GeoCard(cornerRadius: 20) {
-                                VStack(alignment: .leading, spacing: 12) {
+                                VStack(alignment: .leading, spacing: 16) {
                                     Text(group.day.formatted(.dateTime.year().month(.twoDigits).day(.twoDigits)))
                                         .font(.headline.weight(.bold))
-                                    ForEach(group.records) { record in
-                                        HStack(alignment: .top, spacing: 12) {
-                                            Text(record.date, format: .dateTime.hour().minute())
-                                                .font(.caption.monospacedDigit().weight(.bold))
-                                                .foregroundStyle(GeoTheme.muted)
-                                                .frame(width: 44, alignment: .leading)
-                                            VStack(alignment: .leading, spacing: 3) {
-                                                Text("\(record.sectionName) · \(record.hand.title)")
-                                                    .font(.subheadline.weight(.bold))
-                                                Text("\(record.bpm) BPM · \(record.note) · \(record.count) 次")
-                                                    .font(.caption)
-                                                    .foregroundStyle(GeoTheme.muted)
-                                                HStack(spacing: 8) {
-                                                    Text(prototypePracticeDuration(record.duration))
-                                                    if let gap = intervalDescription(after: record) {
-                                                        Text("距上一条 \(gap)")
-                                                    }
-                                                }
-                                                .font(.caption2)
-                                                .foregroundStyle(GeoTheme.muted)
-                                            }
+                                    ForEach(Array(group.sessions.enumerated()), id: \.element.id) { index, session in
+                                        if index > 0 {
+                                            Divider().overlay(GeoTheme.surfaceInk.opacity(0.12))
                                         }
+                                        historySession(session)
                                     }
                                 }
+                                .frame(maxWidth: .infinity, alignment: .leading)
                             }
+                            .frame(maxWidth: .infinity)
                         }
                     }
                 }
@@ -688,26 +1369,40 @@ private struct PrototypeSongHistoryView: View {
         }
         .navigationTitle("历史记录")
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(item: $editTarget) { target in
+            switch target {
+            case .record(let record):
+                PrototypeHistoryRecordEditor(store: store, record: record)
+            case .completion(let record, let completion):
+                PrototypeHistoryCompletionEditor(
+                    store: store,
+                    record: record,
+                    completion: completion
+                )
+            case .unitemized(let record, let summary):
+                PrototypeHistoryUnitemizedEditor(
+                    store: store,
+                    record: record,
+                    summary: summary
+                )
+            }
+        }
     }
 
     private var periodControl: some View {
-        HStack(spacing: 4) {
+        GeoSegmentContainer {
             ForEach(PrototypeHistoryPeriod.allCases) { value in
-                Button {
-                    withAnimation(.snappy(duration: 0.2)) { period = value }
-                } label: {
-                    Text(value.title)
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(period == value ? .black : GeoTheme.text)
-                        .frame(maxWidth: .infinity, minHeight: 40)
-                        .background(period == value ? Color.white.opacity(0.92) : .clear, in: Capsule())
+                GeoSegmentButton(
+                    title: value.title,
+                    symbol: nil,
+                    isActive: period == value
+                ) {
+                    withAnimation(.snappy(duration: 0.2)) {
+                        period = value
+                    }
                 }
-                .buttonStyle(.plain)
-                .accessibilityAddTraits(period == value ? .isSelected : [])
             }
         }
-        .padding(4)
-        .background { GeoGlassCapsule { Color.clear } }
     }
 
     private var dateControl: some View {
@@ -735,39 +1430,45 @@ private struct PrototypeSongHistoryView: View {
     }
 
     private var handControl: some View {
-        HStack(spacing: 4) {
-            ForEach(PrototypePracticeHand.allCases) { value in
-                Button {
+        GeoSegmentContainer {
+            ForEach(PrototypeHistoryHandFilter.allCases) { value in
+                GeoSegmentButton(
+                    title: value.title,
+                    symbol: nil,
+                    isActive: hand == value
+                ) {
                     hand = value
-                } label: {
-                    Text(value.title)
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(hand == value ? .black : GeoTheme.text)
-                        .frame(maxWidth: .infinity, minHeight: 40)
-                        .background(hand == value ? Color.white.opacity(0.92) : .clear, in: Capsule())
                 }
-                .buttonStyle(.plain)
-                .accessibilityAddTraits(hand == value ? .isSelected : [])
             }
         }
-        .padding(4)
-        .background { GeoGlassCapsule { Color.clear } }
     }
 
-    private var filteredRecords: [PrototypeMockRecord] {
+    private var filteredRecords: [PracticeHistoryRecordSnapshot] {
         store.records(for: songID)
-            .filter { $0.hand == hand }
             .filter { record in
                 guard let interval = period.dateInterval(anchor: anchorDate) else { return true }
-                return interval.contains(record.date)
+                return record.startedAt >= interval.start && record.startedAt < interval.end
             }
     }
 
-    private var groupedRecords: [(day: Date, records: [PrototypeMockRecord])] {
-        Dictionary(grouping: filteredRecords) {
-            Calendar.autoupdatingCurrent.startOfDay(for: $0.date)
+    private var historySessions: [PracticeHistorySessionDetail] {
+        PracticeStatisticsEngine.historySessions(
+            records: filteredRecords,
+            hand: hand.practiceHand,
+            order: .newestFirst
+        )
+    }
+
+    private var groupedSessions: [(day: Date, sessions: [PracticeHistorySessionDetail])] {
+        Dictionary(grouping: historySessions) {
+            Calendar.autoupdatingCurrent.startOfDay(for: $0.startedAt)
         }
-        .map { ($0.key, $0.value.sorted { $0.date > $1.date }) }
+        .map { day, sessions in
+            (day, sessions.sorted { lhs, rhs in
+                if lhs.startedAt != rhs.startedAt { return lhs.startedAt > rhs.startedAt }
+                return lhs.id.uuidString < rhs.id.uuidString
+            })
+        }
         .sorted { $0.day > $1.day }
     }
 
@@ -778,15 +1479,897 @@ private struct PrototypeSongHistoryView: View {
         anchorDate = shifted
     }
 
-    private func intervalDescription(after record: PrototypeMockRecord) -> String? {
-        guard let index = filteredRecords.firstIndex(where: { $0.id == record.id }),
-              filteredRecords.indices.contains(index + 1)
-        else { return nil }
-        let seconds = max(0, Int(record.date.timeIntervalSince(filteredRecords[index + 1].date)))
-        if seconds < 60 { return "\(seconds)s" }
-        if seconds < 3_600 { return "\(seconds / 60)m" }
-        if seconds < 86_400 { return "\(seconds / 3_600)h" }
-        return "\(seconds / 86_400)d"
+    @ViewBuilder
+    private func historySession(_ session: PracticeHistorySessionDetail) -> some View {
+        let durationText = prototypePracticeDuration(
+            Double(session.summaryStats.durationMilliseconds) / 1_000
+        )
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text(session.eventName)
+                    .font(.subheadline.weight(.bold))
+                Spacer(minLength: 8)
+                Text("\(session.summaryStats.count) 次")
+                    .font(.caption.monospacedDigit().weight(.semibold))
+                    .foregroundStyle(GeoTheme.muted)
+            }
+
+            Text("开始 \(session.startedAt.formatted(.dateTime.hour().minute())) · 有效时长 \(durationText)")
+                .font(.caption)
+                .foregroundStyle(GeoTheme.muted)
+
+            if !session.attempts.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(Array(session.attempts.enumerated()), id: \.element.id) { index, attempt in
+                        if index > 0 {
+                            let intervalText = PracticeHistoryIntervalFormatter.string(
+                                since: session.attempts[index - 1].completedAt,
+                                to: attempt.completedAt
+                            )
+                            Text("间隔 \(intervalText)")
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(GeoTheme.muted)
+                        }
+                        historyAttempt(attempt, record: session.record)
+                    }
+                }
+            }
+
+            if !session.unitemizedCompletions.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(session.unitemizedCompletions) { summary in
+                        Button {
+                            if session.record.completionSamples.isEmpty {
+                                editTarget = .record(session.record)
+                            } else {
+                                editTarget = .unitemized(
+                                    record: session.record,
+                                    summary: summary
+                                )
+                            }
+                        } label: {
+                            HStack(spacing: 10) {
+                                historyUnitemizedSummary(summary)
+                                Spacer(minLength: 8)
+                                Image(systemName: "chevron.right")
+                                    .font(.caption.weight(.bold))
+                                    .foregroundStyle(GeoTheme.muted)
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityHint(
+                            session.record.completionSamples.isEmpty
+                                ? "打开后可编辑或删除这场旧记录"
+                                : "打开后只编辑或删除这条汇总，不影响逐次完成"
+                        )
+                    }
+                }
+            }
+
+            if session.attempts.isEmpty && session.unitemizedCompletions.isEmpty {
+                Button {
+                    editTarget = .record(session.record)
+                } label: {
+                    HStack(spacing: 10) {
+                        historySessionSummary(session)
+                        Spacer(minLength: 8)
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(GeoTheme.muted)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("打开后可编辑或删除这条汇总记录")
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func historyAttempt(
+        _ attempt: PracticeHistoryCompletionEntry,
+        record: PracticeHistoryRecordSnapshot
+    ) -> some View {
+        Button {
+            editTarget = .completion(record: record, completion: attempt)
+        } label: {
+            HStack(alignment: .top, spacing: 10) {
+                Text("\(attempt.sequenceNumber).")
+                    .font(.caption.monospacedDigit().weight(.bold))
+                    .foregroundStyle(GeoTheme.muted)
+                    .frame(width: 24, alignment: .trailing)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 8) {
+                        Text(attempt.completedAt, format: .dateTime.hour().minute().second())
+                            .monospacedDigit()
+                        if hand == .all {
+                            Text(PrototypePracticeHand(attempt.hand).title)
+                        }
+                    }
+                    .font(.caption.weight(.bold))
+
+                    Text("\(attempt.preset.bpm) BPM · \(attempt.preset.subdivisionTitle) · \(attempt.preset.beats) 拍")
+                        .font(.caption)
+                        .foregroundStyle(GeoTheme.muted)
+                }
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(GeoTheme.muted)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("打开后可编辑或删除这次完成")
+    }
+
+    private func historyUnitemizedSummary(
+        _ summary: PracticeHistoryUnitemizedCompletionSummary
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("\(summary.title) · \(PrototypePracticeHand(summary.hand).title)")
+                    .fontWeight(.bold)
+                Spacer(minLength: 8)
+                Text("\(summary.count) 次")
+                    .monospacedDigit()
+            }
+            if let preset = summary.preset {
+                Text("\(preset.bpm) BPM · \(preset.subdivisionTitle) · \(preset.beats) 拍")
+                    .foregroundStyle(GeoTheme.muted)
+            }
+        }
+        .font(.caption)
+    }
+
+    @ViewBuilder
+    private func historySessionSummary(_ session: PracticeHistorySessionDetail) -> some View {
+        let visibleHands = hand.practiceHand.map { [$0] } ?? PracticeHand.controlOrder
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(visibleHands, id: \.self) { practiceHand in
+                let stats = session.record.stats(for: practiceHand)
+                if stats.count > 0 || stats.durationMilliseconds > 0 {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        if hand == .all {
+                            Text(PrototypePracticeHand(practiceHand).title)
+                                .fontWeight(.bold)
+                        }
+                        Text(historyAggregateSummary(
+                            record: session.record,
+                            hand: practiceHand,
+                            count: stats.count
+                        ))
+                    }
+                    .font(.caption)
+                    .foregroundStyle(GeoTheme.muted)
+                }
+            }
+        }
+    }
+
+    private func historyAggregateSummary(
+        record: PracticeHistoryRecordSnapshot,
+        hand: PracticeHand,
+        count: Int
+    ) -> String {
+        guard let preset = record.preset(for: hand) else {
+            return "\(count) 次"
+        }
+        return "\(preset.bpm) BPM · \(preset.subdivisionTitle) · \(preset.beats) 拍 · \(count) 次"
+    }
+}
+
+private struct PrototypeHistoryRecordEditor: View {
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject var store: PracticeLibraryStore
+    let record: PracticeHistoryRecordSnapshot
+
+    @State private var draft: PracticeHistoryRecordEditDraft
+    @State private var selectedHand: PracticeHand
+    @State private var showsDeleteConfirmation = false
+    @State private var operationError: String?
+
+    init(store: PracticeLibraryStore, record: PracticeHistoryRecordSnapshot) {
+        self.store = store
+        self.record = record
+        let initialDraft = PracticeHistoryRecordEditDraft(record: record)
+        _draft = State(initialValue: initialDraft)
+        _selectedHand = State(
+            initialValue: initialDraft.populatedHands.first ?? .left
+        )
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("记录") {
+                    DatePicker(
+                        "记录时间",
+                        selection: Binding(
+                            get: { draft.finishedAt },
+                            set: { draft.move(to: $0) }
+                        ),
+                        displayedComponents: [.date, .hourAndMinute]
+                    )
+                    LabeledContent("练习段落", value: record.eventNameSnapshot)
+                }
+
+                Section("手型与完成") {
+                    if draft.populatedHands.count <= 1 {
+                        Picker(
+                            "手型",
+                            selection: Binding(
+                                get: { selectedHand },
+                                set: { newHand in
+                                    let oldHand = selectedHand
+                                    draft.moveSingleHand(from: oldHand, to: newHand)
+                                    selectedHand = newHand
+                                }
+                            )
+                        ) {
+                            ForEach(PracticeHand.controlOrder) { value in
+                                Text(value.title).tag(value)
+                            }
+                        }
+                    } else {
+                        Picker("正在编辑", selection: $selectedHand) {
+                            ForEach(PracticeHand.controlOrder) { value in
+                                Text(value.title).tag(value)
+                            }
+                        }
+                        Text("这条记录包含多个手型；可逐项切换并修改，已有手型不会被覆盖。")
+                            .font(.footnote)
+                            .foregroundStyle(GeoTheme.muted)
+                    }
+
+                    Stepper(
+                        "完成 \(selectedValue.count) 次",
+                        value: countBinding,
+                        in: 0...9_999
+                    )
+                    Stepper(
+                        "有效时长 \(durationMinutes) 分钟",
+                        value: durationMinutesBinding,
+                        in: 0...1_440
+                    )
+                    Stepper(
+                        "附加秒数 \(durationSecondsRemainder) 秒",
+                        value: durationSecondsBinding,
+                        in: 0...59
+                    )
+                }
+
+                Section("练习配置") {
+                    if selectedValue.preset != nil {
+                        Stepper(
+                            "速度 \(selectedValue.preset?.bpm ?? 0) BPM",
+                            value: presetIntegerBinding(\.bpm),
+                            in: 30...240
+                        )
+                        Stepper(
+                            "拍数 \(selectedValue.preset?.beats ?? 0) 拍",
+                            value: presetIntegerBinding(\.beats),
+                            in: 3...9
+                        )
+                        Picker("训练音符", selection: presetIntegerBinding(\.subdivision)) {
+                            ForEach(MetronomePreset.supportedSubdivisions, id: \.self) { value in
+                                Text(subdivisionTitle(for: value)).tag(value)
+                            }
+                        }
+                        if let preset = selectedValue.preset,
+                           MetronomePreset.groupings(for: preset.beats).count > 1 {
+                            Picker("拍组", selection: groupingBinding) {
+                                ForEach(MetronomePreset.groupings(for: preset.beats), id: \.self) {
+                                    Text($0).tag($0)
+                                }
+                            }
+                        }
+                    } else {
+                        LabeledContent("配置", value: "旧记录未保存")
+                        Text("这里只保留原记录中真实存在的字段，不会自动套用当前节拍器参数。")
+                            .font(.footnote)
+                            .foregroundStyle(GeoTheme.muted)
+                    }
+                }
+
+                Section {
+                    Button("删除这条记录", role: .destructive) {
+                        showsDeleteConfirmation = true
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .background(GeoTheme.background)
+            .navigationTitle("编辑历史记录")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("保存") { save() }
+                }
+            }
+            .confirmationDialog(
+                "删除这条历史记录？",
+                isPresented: $showsDeleteConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("删除", role: .destructive) { deleteConfirmed() }
+                Button("取消", role: .cancel) {}
+            } message: {
+                Text("确认后才会删除；相关次数、时长和统计会同步更新。")
+            }
+            .alert("操作失败", isPresented: Binding(
+                get: { operationError != nil },
+                set: { if !$0 { operationError = nil } }
+            )) {
+                Button("知道了", role: .cancel) {}
+            } message: {
+                Text(operationError ?? "")
+            }
+        }
+    }
+
+    private var selectedValue: PracticeHistoryHandEditDraft {
+        draft.value(for: selectedHand)
+    }
+
+    private var countBinding: Binding<Int> {
+        Binding(
+            get: { selectedValue.count },
+            set: { value in
+                draft.update(hand: selectedHand) { $0.count = value }
+            }
+        )
+    }
+
+    private var durationMinutes: Int {
+        Int(min(Int64(Int.max), selectedValue.durationMilliseconds / 60_000))
+    }
+
+    private var durationSecondsRemainder: Int {
+        Int((selectedValue.durationMilliseconds / 1_000) % 60)
+    }
+
+    private var durationMinutesBinding: Binding<Int> {
+        Binding(
+            get: { durationMinutes },
+            set: { minutes in
+                let milliseconds = Int64(minutes) * 60_000
+                    + Int64(durationSecondsRemainder) * 1_000
+                draft.update(hand: selectedHand) {
+                    $0.durationMilliseconds = milliseconds
+                }
+            }
+        )
+    }
+
+    private var durationSecondsBinding: Binding<Int> {
+        Binding(
+            get: { durationSecondsRemainder },
+            set: { seconds in
+                let milliseconds = Int64(durationMinutes) * 60_000
+                    + Int64(seconds) * 1_000
+                draft.update(hand: selectedHand) {
+                    $0.durationMilliseconds = milliseconds
+                }
+            }
+        )
+    }
+
+    private func presetIntegerBinding(
+        _ keyPath: WritableKeyPath<MetronomePreset, Int>
+    ) -> Binding<Int> {
+        Binding(
+            get: { selectedValue.preset?[keyPath: keyPath] ?? 0 },
+            set: { value in
+                draft.update(hand: selectedHand) { hand in
+                    guard var preset = hand.preset else { return }
+                    preset[keyPath: keyPath] = value
+                    hand.preset = preset.normalized
+                }
+            }
+        )
+    }
+
+    private var groupingBinding: Binding<String> {
+        Binding(
+            get: { selectedValue.preset?.grouping ?? "标准" },
+            set: { value in
+                draft.update(hand: selectedHand) { hand in
+                    guard var preset = hand.preset else { return }
+                    preset.grouping = value
+                    hand.preset = preset.normalized
+                }
+            }
+        )
+    }
+
+    private func subdivisionTitle(for value: Int) -> String {
+        var preset = MetronomePreset.standard
+        preset.subdivision = value
+        return preset.subdivisionTitle
+    }
+
+    private func save() {
+        do {
+            try store.updateHistoryRecord(draft)
+            dismiss()
+        } catch {
+            operationError = error.localizedDescription
+        }
+    }
+
+    private func deleteConfirmed() {
+        do {
+            guard try store.deleteHistoryRecord(id: record.id) else {
+                throw PracticeLibraryStoreError.historyRecordNotFound
+            }
+            dismiss()
+        } catch {
+            operationError = error.localizedDescription
+        }
+    }
+}
+
+private struct PrototypeHistoryUnitemizedEditor: View {
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject var store: PracticeLibraryStore
+    let record: PracticeHistoryRecordSnapshot
+    let summary: PracticeHistoryUnitemizedCompletionSummary
+
+    @State private var draft: PracticeHistoryUnitemizedEditDraft
+    @State private var showsDeleteConfirmation = false
+    @State private var operationError: String?
+
+    init(
+        store: PracticeLibraryStore,
+        record: PracticeHistoryRecordSnapshot,
+        summary: PracticeHistoryUnitemizedCompletionSummary
+    ) {
+        self.store = store
+        self.record = record
+        self.summary = summary
+        _draft = State(initialValue: PracticeHistoryUnitemizedEditDraft(
+            record: record,
+            summary: summary
+        ))
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("汇总记录") {
+                    LabeledContent("类型", value: summary.title)
+                    LabeledContent("练习段落", value: record.eventNameSnapshot)
+                    if draft.completedAt != nil {
+                        DatePicker(
+                            "记录时间",
+                            selection: completedAtBinding,
+                            displayedComponents: [.date, .hourAndMinute]
+                        )
+                        Stepper(
+                            "秒 \(secondComponent)",
+                            value: secondBinding,
+                            in: 0...59
+                        )
+                    } else {
+                        LabeledContent(
+                            "场次时间",
+                            value: record.finishedAt.formatted(
+                                .dateTime.year().month().day().hour().minute()
+                            )
+                        )
+                        Text("旧版汇总没有保存单次时间，因此不会伪造一个可编辑的时间。")
+                            .font(.footnote)
+                            .foregroundStyle(GeoTheme.muted)
+                    }
+                }
+
+                Section("手型与完成") {
+                    Picker("手型", selection: $draft.hand) {
+                        ForEach(PracticeHand.controlOrder) { value in
+                            Text(value.title).tag(value)
+                        }
+                    }
+                    Stepper(
+                        "完成 \(draft.count) 次",
+                        value: $draft.count,
+                        in: 1...9_999
+                    )
+                    if draft.durationMilliseconds != nil {
+                        Stepper(
+                            "有效时长 \(durationMinutes) 分钟",
+                            value: durationMinutesBinding,
+                            in: 0...1_440
+                        )
+                        Stepper(
+                            "附加秒数 \(durationSecondsRemainder) 秒",
+                            value: durationSecondsBinding,
+                            in: 0...59
+                        )
+                    }
+                }
+
+                Section("练习配置") {
+                    if draft.preset != nil {
+                        Stepper(
+                            "速度 \(draft.preset?.bpm ?? 0) BPM",
+                            value: presetIntegerBinding(\.bpm),
+                            in: 30...240
+                        )
+                        Stepper(
+                            "拍数 \(draft.preset?.beats ?? 0) 拍",
+                            value: presetIntegerBinding(\.beats),
+                            in: 3...9
+                        )
+                        Picker("训练音符", selection: presetIntegerBinding(\.subdivision)) {
+                            ForEach(MetronomePreset.supportedSubdivisions, id: \.self) { value in
+                                Text(subdivisionTitle(for: value)).tag(value)
+                            }
+                        }
+                        if let preset = draft.preset,
+                           MetronomePreset.groupings(for: preset.beats).count > 1 {
+                            Picker("拍组", selection: groupingBinding) {
+                                ForEach(MetronomePreset.groupings(for: preset.beats), id: \.self) {
+                                    Text($0).tag($0)
+                                }
+                            }
+                        }
+                    } else {
+                        LabeledContent("配置", value: "旧记录未保存")
+                        Text("不会用当前节拍器参数填补旧数据。")
+                            .font(.footnote)
+                            .foregroundStyle(GeoTheme.muted)
+                    }
+                }
+
+                Section {
+                    Button("删除这条汇总", role: .destructive) {
+                        showsDeleteConfirmation = true
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .background(GeoTheme.background)
+            .navigationTitle("编辑汇总记录")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("保存") { save() }
+                }
+            }
+            .confirmationDialog(
+                "删除这条汇总？",
+                isPresented: $showsDeleteConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("删除", role: .destructive) { deleteConfirmed() }
+                Button("取消", role: .cancel) {}
+            } message: {
+                Text("确认后才会删除；同一场中的逐次完成不会被提前移除。")
+            }
+            .alert("操作失败", isPresented: Binding(
+                get: { operationError != nil },
+                set: { if !$0 { operationError = nil } }
+            )) {
+                Button("知道了", role: .cancel) {}
+            } message: {
+                Text(operationError ?? "")
+            }
+        }
+    }
+
+    private var completedAtBinding: Binding<Date> {
+        Binding(
+            get: { draft.completedAt ?? record.finishedAt },
+            set: { draft.completedAt = $0 }
+        )
+    }
+
+    private var secondComponent: Int {
+        Calendar.autoupdatingCurrent.component(.second, from: completedAtBinding.wrappedValue)
+    }
+
+    private var secondBinding: Binding<Int> {
+        Binding(
+            get: { secondComponent },
+            set: { value in
+                if let revised = Calendar.autoupdatingCurrent.date(
+                    bySetting: .second,
+                    value: value,
+                    of: completedAtBinding.wrappedValue
+                ) {
+                    draft.completedAt = revised
+                }
+            }
+        )
+    }
+
+    private var durationMinutes: Int {
+        Int(min(Int64(Int.max), (draft.durationMilliseconds ?? 0) / 60_000))
+    }
+
+    private var durationSecondsRemainder: Int {
+        Int(((draft.durationMilliseconds ?? 0) / 1_000) % 60)
+    }
+
+    private var durationMinutesBinding: Binding<Int> {
+        Binding(
+            get: { durationMinutes },
+            set: { minutes in
+                draft.durationMilliseconds = Int64(minutes) * 60_000
+                    + Int64(durationSecondsRemainder) * 1_000
+            }
+        )
+    }
+
+    private var durationSecondsBinding: Binding<Int> {
+        Binding(
+            get: { durationSecondsRemainder },
+            set: { seconds in
+                draft.durationMilliseconds = Int64(durationMinutes) * 60_000
+                    + Int64(seconds) * 1_000
+            }
+        )
+    }
+
+    private func presetIntegerBinding(
+        _ keyPath: WritableKeyPath<MetronomePreset, Int>
+    ) -> Binding<Int> {
+        Binding(
+            get: { draft.preset?[keyPath: keyPath] ?? 0 },
+            set: { value in
+                guard var preset = draft.preset else { return }
+                preset[keyPath: keyPath] = value
+                draft.preset = preset.normalized
+            }
+        )
+    }
+
+    private var groupingBinding: Binding<String> {
+        Binding(
+            get: { draft.preset?.grouping ?? "标准" },
+            set: { value in
+                guard var preset = draft.preset else { return }
+                preset.grouping = value
+                draft.preset = preset.normalized
+            }
+        )
+    }
+
+    private func subdivisionTitle(for value: Int) -> String {
+        var preset = MetronomePreset.standard
+        preset.subdivision = value
+        return preset.subdivisionTitle
+    }
+
+    private func save() {
+        do {
+            try store.updateHistoryUnitemized(draft)
+            dismiss()
+        } catch {
+            operationError = error.localizedDescription
+        }
+    }
+
+    private func deleteConfirmed() {
+        do {
+            guard try store.deleteHistoryUnitemized(draft) else {
+                throw PracticeLibraryStoreError.historySummaryNotFound
+            }
+            dismiss()
+        } catch {
+            operationError = error.localizedDescription
+        }
+    }
+}
+
+private struct PrototypeHistoryCompletionEditor: View {
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject var store: PracticeLibraryStore
+    let record: PracticeHistoryRecordSnapshot
+    let completion: PracticeHistoryCompletionEntry
+
+    @State private var draft: PracticeHistoryCompletionEditDraft
+    @State private var showsDeleteConfirmation = false
+    @State private var operationError: String?
+
+    init(
+        store: PracticeLibraryStore,
+        record: PracticeHistoryRecordSnapshot,
+        completion: PracticeHistoryCompletionEntry
+    ) {
+        self.store = store
+        self.record = record
+        self.completion = completion
+        _draft = State(initialValue: PracticeHistoryCompletionEditDraft(
+            recordID: record.id,
+            completion: completion
+        ))
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("完成记录") {
+                    DatePicker(
+                        "完成时间",
+                        selection: $draft.completedAt,
+                        displayedComponents: [.date, .hourAndMinute]
+                    )
+                    Stepper(
+                        "秒 \(secondComponent)",
+                        value: secondBinding,
+                        in: 0...59
+                    )
+                    Picker("手型", selection: $draft.hand) {
+                        ForEach(PracticeHand.controlOrder) { value in
+                            Text(value.title).tag(value)
+                        }
+                    }
+                    LabeledContent("完成次数", value: "1 次")
+                    LabeledContent("练习段落", value: record.eventNameSnapshot)
+                }
+
+                Section("练习配置") {
+                    Stepper(
+                        "速度 \(draft.preset.bpm) BPM",
+                        value: presetIntegerBinding(\.bpm),
+                        in: 30...240
+                    )
+                    Stepper(
+                        "拍数 \(draft.preset.beats) 拍",
+                        value: presetIntegerBinding(\.beats),
+                        in: 3...9
+                    )
+                    Picker("训练音符", selection: presetIntegerBinding(\.subdivision)) {
+                        ForEach(MetronomePreset.supportedSubdivisions, id: \.self) { value in
+                            Text(subdivisionTitle(for: value)).tag(value)
+                        }
+                    }
+                    if MetronomePreset.groupings(for: draft.preset.beats).count > 1 {
+                        Picker("拍组", selection: $draft.preset.grouping) {
+                            ForEach(MetronomePreset.groupings(for: draft.preset.beats), id: \.self) {
+                                Text($0).tag($0)
+                            }
+                        }
+                    }
+                }
+
+                Section {
+                    Button("删除这次完成", role: .destructive) {
+                        showsDeleteConfirmation = true
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .background(GeoTheme.background)
+            .navigationTitle("编辑完成记录")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("保存") { save() }
+                }
+            }
+            .confirmationDialog(
+                "删除这次完成？",
+                isPresented: $showsDeleteConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("删除", role: .destructive) { deleteConfirmed() }
+                Button("取消", role: .cancel) {}
+            } message: {
+                Text("确认后才会删除，并同步更新对应的次数和统计。")
+            }
+            .alert("操作失败", isPresented: Binding(
+                get: { operationError != nil },
+                set: { if !$0 { operationError = nil } }
+            )) {
+                Button("知道了", role: .cancel) {}
+            } message: {
+                Text(operationError ?? "")
+            }
+        }
+    }
+
+    private var secondComponent: Int {
+        Calendar.autoupdatingCurrent.component(.second, from: draft.completedAt)
+    }
+
+    private var secondBinding: Binding<Int> {
+        Binding(
+            get: { secondComponent },
+            set: { value in
+                if let revised = Calendar.autoupdatingCurrent.date(
+                    bySetting: .second,
+                    value: value,
+                    of: draft.completedAt
+                ) {
+                    draft.completedAt = revised
+                }
+            }
+        )
+    }
+
+    private func presetIntegerBinding(
+        _ keyPath: WritableKeyPath<MetronomePreset, Int>
+    ) -> Binding<Int> {
+        Binding(
+            get: { draft.preset[keyPath: keyPath] },
+            set: { value in
+                draft.preset[keyPath: keyPath] = value
+                draft.preset = draft.preset.normalized
+            }
+        )
+    }
+
+    private func subdivisionTitle(for value: Int) -> String {
+        var preset = MetronomePreset.standard
+        preset.subdivision = value
+        return preset.subdivisionTitle
+    }
+
+    private func save() {
+        do {
+            try store.updateHistoryCompletion(draft)
+            dismiss()
+        } catch {
+            operationError = error.localizedDescription
+        }
+    }
+
+    private func deleteConfirmed() {
+        do {
+            guard try store.deleteHistoryCompletion(
+                recordID: record.id,
+                completionID: completion.id
+            ) else {
+                throw PracticeLibraryStoreError.historyCompletionNotFound
+            }
+            dismiss()
+        } catch {
+            operationError = error.localizedDescription
+        }
+    }
+}
+
+private enum PrototypeHistoryHandFilter: String, CaseIterable, Identifiable {
+    case all
+    case left
+    case both
+    case right
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .all: "所有"
+        case .left: "左手"
+        case .both: "合手"
+        case .right: "右手"
+        }
+    }
+
+    var practiceHand: PracticeHand? {
+        switch self {
+        case .all: nil
+        case .left: .left
+        case .both: .both
+        case .right: .right
+        }
     }
 }
 
@@ -843,7 +2426,7 @@ private enum PrototypeHistoryPeriod: String, CaseIterable, Identifiable {
 
 private struct PrototypeBackfillView: View {
     @Environment(\.dismiss) private var dismiss
-    @ObservedObject var store: PrototypePracticeStore
+    @ObservedObject var store: PracticeLibraryStore
     let songID: UUID
 
     @State private var date = Date.now
@@ -853,6 +2436,7 @@ private struct PrototypeBackfillView: View {
     @State private var note = "八分音符"
     @State private var minutes = 5
     @State private var count = 1
+    @State private var saveError: String?
 
     var body: some View {
         NavigationStack {
@@ -880,11 +2464,13 @@ private struct PrototypeBackfillView: View {
                 }
 
                 Section {
-                    Text("上下滚动或手动填写均为原型交互；保存只加入本次运行的 Mock 历史。")
+                    Text("保存后会写入该段落的正式练习历史和统计。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(GeoTheme.background)
             .navigationTitle("补录")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -893,17 +2479,7 @@ private struct PrototypeBackfillView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("保存") {
-                        store.addRecord(
-                            songID: songID,
-                            sectionID: sectionID,
-                            date: date,
-                            hand: hand,
-                            bpm: bpm,
-                            note: note,
-                            duration: TimeInterval(minutes * 60),
-                            count: count
-                        )
-                        dismiss()
+                        save()
                     }
                     .disabled(sectionID == nil)
                 }
@@ -912,12 +2488,39 @@ private struct PrototypeBackfillView: View {
         .onAppear {
             if sectionID == nil { sectionID = store.song(id: songID)?.sections.first?.id }
         }
+        .alert("补录失败", isPresented: Binding(
+            get: { saveError != nil },
+            set: { if !$0 { saveError = nil } }
+        )) {
+            Button("知道了", role: .cancel) {}
+        } message: {
+            Text(saveError ?? "")
+        }
+    }
+
+    private func save() {
+        do {
+            _ = try store.addRecord(
+                songID: songID,
+                sectionID: sectionID,
+                date: date,
+                hand: hand,
+                bpm: bpm,
+                note: note,
+                duration: TimeInterval(minutes * 60),
+                count: count
+            )
+            dismiss()
+        } catch {
+            saveError = error.localizedDescription
+        }
     }
 }
 
 private struct PrototypeArchiveView: View {
     @Environment(\.dismiss) private var dismiss
-    @ObservedObject var store: PrototypePracticeStore
+    @ObservedObject var store: PracticeLibraryStore
+    @State private var restoreError: String?
 
     var body: some View {
         NavigationStack {
@@ -938,7 +2541,7 @@ private struct PrototypeArchiveView: View {
                                                 .foregroundStyle(GeoTheme.muted)
                                         }
                                         Spacer()
-                                        Button { store.setArchived(song.id, false) } label: {
+                                        Button { restore(song.id) } label: {
                                             Text("恢复")
                                                 .font(.caption.weight(.bold))
                                                 .padding(.horizontal, 14)
@@ -961,185 +2564,82 @@ private struct PrototypeArchiveView: View {
                 }
             }
         }
+        .alert("恢复失败", isPresented: Binding(
+            get: { restoreError != nil },
+            set: { if !$0 { restoreError = nil } }
+        )) {
+            Button("知道了", role: .cancel) {}
+        } message: {
+            Text(restoreError ?? "")
+        }
+    }
+
+    private func restore(_ songID: UUID) {
+        do {
+            _ = try store.setArchived(songID, false)
+        } catch {
+            restoreError = error.localizedDescription
+        }
     }
 }
 
-// MARK: - Mock store and values
+private struct PrototypeSongDeletionAlertModifier: ViewModifier {
+    @Binding var song: PracticeSongSnapshot?
+    let onDelete: (PracticeSongSnapshot) -> Void
 
-@MainActor
-private final class PrototypePracticeStore: ObservableObject {
-    @Published private(set) var songs: [PrototypeMockSong]
-    @Published private(set) var records: [PrototypeMockRecord]
-
-    init() {
-        let fixture = PrototypePracticeFixture.make()
-        songs = fixture.songs
-        records = fixture.records
-    }
-
-    var activeSongs: [PrototypeMockSong] {
-        songs.filter { !$0.isArchived }.sorted { $0.name < $1.name }
-    }
-
-    var archivedSongs: [PrototypeMockSong] {
-        songs.filter(\.isArchived).sorted { $0.name < $1.name }
-    }
-
-    func song(id: UUID) -> PrototypeMockSong? {
-        songs.first { $0.id == id }
-    }
-
-    func records(for songID: UUID) -> [PrototypeMockRecord] {
-        records.filter { $0.songID == songID }.sorted { $0.date > $1.date }
-    }
-
-    func activeDays(for songID: UUID) -> Int {
-        let calendar = Calendar.autoupdatingCurrent
-        return Set(records(for: songID).map { calendar.startOfDay(for: $0.date) }).count
-    }
-
-    func weekCounts(for songID: UUID) -> [Int] {
-        let calendar = Calendar.autoupdatingCurrent
-        return (0..<7).reversed().map { offset in
-            let day = calendar.date(byAdding: .day, value: -offset, to: .now) ?? .now
-            return records(for: songID)
-                .filter { calendar.isDate($0.date, inSameDayAs: day) }
-                .reduce(0) { $0 + $1.count }
+    func body(content: Content) -> some View {
+        content.alert(
+            "删除曲目？",
+            isPresented: Binding(
+                get: { song != nil },
+                set: { isPresented in
+                    if !isPresented { song = nil }
+                }
+            ),
+            presenting: song
+        ) { candidate in
+            Button("取消", role: .cancel) {
+                song = nil
+            }
+            Button("删除", role: .destructive) {
+                song = nil
+                onDelete(candidate)
+            }
+        } message: { _ in
+            Text(PrototypeSongDeletionCopy.message)
         }
     }
+}
 
-    func launch(song: PrototypeMockSong, section: PrototypeMockSection) -> PrototypePracticeLaunch {
-        let completedByHand: [PrototypePracticeHand: Int] = [
-            .left: min(section.completedCount, song.leftGoal),
-            .right: min(max(0, section.completedCount - 1), song.rightGoal),
-            .both: min(max(0, section.completedCount - 2), song.bothGoal)
-        ]
-        let targetByHand: [PrototypePracticeHand: Int] = [
-            .left: song.leftGoal,
-            .right: song.rightGoal,
-            .both: song.bothGoal
-        ]
-        return PrototypePracticeLaunch(
-            pieceName: song.name,
-            sectionName: section.name,
-            bpm: section.bpm,
-            beats: section.beats,
-            trainingNote: section.note,
-            referenceNote: "四分音符",
-            completedByHand: completedByHand,
-            targetByHand: targetByHand
-        )
-    }
-
-    func setArchived(_ id: UUID, _ archived: Bool) {
-        guard let index = songs.firstIndex(where: { $0.id == id }) else { return }
-        songs[index].isArchived = archived
-    }
-
-    func saveSong(
-        id: UUID?,
-        name: String,
-        group: String,
-        sectionNames: [String],
-        leftGoal: Int,
-        rightGoal: Int,
-        bothGoal: Int,
-        multiplier: Int,
-        resetsDaily: Bool,
-        endDate: Date,
-        archived: Bool
-    ) {
-        let cleanNames = sectionNames
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        let fallback = cleanNames.isEmpty ? ["完整练习"] : cleanNames
-
-        if let id, let index = songs.firstIndex(where: { $0.id == id }) {
-            let old = songs[index]
-            let sections = fallback.enumerated().map { offset, title in
-                old.sections.first(where: { $0.name == title })
-                    ?? PrototypeMockSection(
-                        name: title,
-                        lastPracticed: .now.addingTimeInterval(TimeInterval(-offset * 86_400)),
-                        completedCount: 0,
-                        target: max(leftGoal, rightGoal, bothGoal),
-                        bpm: 80,
-                        beats: 4,
-                        note: "八分音符"
-                    )
-            }
-            songs[index] = PrototypeMockSong(
-                id: old.id,
-                name: name,
-                group: group.isEmpty ? "未分组" : group,
-                sections: sections,
-                leftGoal: max(0, leftGoal),
-                rightGoal: max(0, rightGoal),
-                bothGoal: max(0, bothGoal),
-                multiplier: max(1, multiplier),
-                resetsDaily: resetsDaily,
-                endDate: endDate,
-                createdAt: old.createdAt,
-                isArchived: archived
-            )
-        } else {
-            let sections = fallback.enumerated().map { offset, title in
-                PrototypeMockSection(
-                    name: title,
-                    lastPracticed: .now.addingTimeInterval(TimeInterval(-offset * 86_400)),
-                    completedCount: 0,
-                    target: max(leftGoal, rightGoal, bothGoal),
-                    bpm: 80,
-                    beats: 4,
-                    note: "八分音符"
+private extension View {
+    func prototypePracticeListRow(
+        top: CGFloat,
+        bottom: CGFloat
+    ) -> some View {
+        frame(maxWidth: 760)
+            .frame(maxWidth: .infinity)
+            .listRowInsets(
+                EdgeInsets(
+                    top: top,
+                    leading: 16,
+                    bottom: bottom,
+                    trailing: 16
                 )
-            }
-            songs.append(PrototypeMockSong(
-                name: name,
-                group: group.isEmpty ? "未分组" : group,
-                sections: sections,
-                leftGoal: max(0, leftGoal),
-                rightGoal: max(0, rightGoal),
-                bothGoal: max(0, bothGoal),
-                multiplier: max(1, multiplier),
-                resetsDaily: resetsDaily,
-                endDate: endDate,
-                createdAt: .now,
-                isArchived: archived
-            ))
-        }
+            )
+            .listRowBackground(Color.clear)
+            .listRowSeparator(.hidden)
     }
 
-    func addRecord(
-        songID: UUID,
-        sectionID: UUID?,
-        date: Date,
-        hand: PrototypePracticeHand,
-        bpm: Int,
-        note: String,
-        duration: TimeInterval,
-        count: Int
-    ) {
-        guard let songIndex = songs.firstIndex(where: { $0.id == songID }),
-              let sectionIndex = songs[songIndex].sections.firstIndex(where: { $0.id == sectionID })
-        else { return }
-        let section = songs[songIndex].sections[sectionIndex]
-        let safeCount = max(1, count)
-        records.append(PrototypeMockRecord(
-            songID: songID,
-            sectionID: section.id,
-            sectionName: section.name,
-            date: date,
-            hand: hand,
-            bpm: bpm,
-            note: note,
-            duration: max(0, duration),
-            count: safeCount
-        ))
-        songs[songIndex].sections[sectionIndex].completedCount += safeCount
-        if date > songs[songIndex].sections[sectionIndex].lastPracticed {
-            songs[songIndex].sections[sectionIndex].lastPracticed = date
-        }
+    func prototypeSongDeletionAlert(
+        song: Binding<PracticeSongSnapshot?>,
+        onDelete: @escaping (PracticeSongSnapshot) -> Void
+    ) -> some View {
+        modifier(
+            PrototypeSongDeletionAlertModifier(
+                song: song,
+                onDelete: onDelete
+            )
+        )
     }
 }
 
@@ -1151,158 +2651,8 @@ private enum PrototypePracticeFilter: Hashable {
 
 private struct PrototypeSongSectionItem: Identifiable {
     var id: String { "\(song.id.uuidString)-\(section.id.uuidString)" }
-    let song: PrototypeMockSong
-    let section: PrototypeMockSection
-}
-
-private struct PrototypeMockSong: Identifiable, Hashable {
-    var id = UUID()
-    var name: String
-    var group: String
-    var sections: [PrototypeMockSection]
-    var leftGoal: Int
-    var rightGoal: Int
-    var bothGoal: Int
-    var multiplier: Int
-    var resetsDaily: Bool
-    var endDate: Date
-    var createdAt: Date
-    var isArchived: Bool
-}
-
-private struct PrototypeMockSection: Identifiable, Hashable {
-    var id = UUID()
-    var name: String
-    var lastPracticed: Date
-    var completedCount: Int
-    var target: Int?
-    var bpm: Int
-    var beats: Int
-    var note: String
-}
-
-private struct PrototypeMockRecord: Identifiable, Hashable {
-    var id = UUID()
-    let songID: UUID
-    let sectionID: UUID
-    let sectionName: String
-    let date: Date
-    let hand: PrototypePracticeHand
-    let bpm: Int
-    let note: String
-    let duration: TimeInterval
-    let count: Int
-}
-
-private enum PrototypePracticeFixture {
-    static func make() -> (songs: [PrototypeMockSong], records: [PrototypeMockRecord]) {
-        let calendar = Calendar.autoupdatingCurrent
-        func date(daysAgo: Int, hour: Int = 18) -> Date {
-            let base = calendar.date(byAdding: .day, value: -daysAgo, to: .now) ?? .now
-            let candidate = calendar.date(
-                bySettingHour: hour,
-                minute: daysAgo * 7 % 60,
-                second: 0,
-                of: base
-            ) ?? base
-            // Today's fixture must never render as an impossible future
-            // practice (for example, “1 hour later” when the app is opened
-            // before the chosen fixture hour).
-            return candidate > .now ? .now.addingTimeInterval(-3_600) : candidate
-        }
-
-        let moonSections = (1...5).map { index in
-            PrototypeMockSection(
-                name: "第\(index)段",
-                lastPracticed: date(daysAgo: index - 1),
-                completedCount: [6, 10, 4, 8, 3][index - 1],
-                target: 10,
-                bpm: [80, 84, 76, 88, 72][index - 1],
-                beats: index == 3 ? 5 : 4,
-                note: index.isMultiple(of: 2) ? "十六分音符" : "八分音符"
-            )
-        }
-        let moon = PrototypeMockSong(
-            name: "月光奏鸣曲",
-            group: "贝多芬",
-            sections: moonSections,
-            leftGoal: 10,
-            rightGoal: 10,
-            bothGoal: 10,
-            multiplier: 1,
-            resetsDaily: true,
-            endDate: calendar.date(byAdding: .month, value: 2, to: .now) ?? .now,
-            createdAt: calendar.date(byAdding: .month, value: -4, to: .now) ?? .now,
-            isArchived: false
-        )
-
-        let hanonSection = PrototypeMockSection(
-            name: "完整练习",
-            lastPracticed: date(daysAgo: 0, hour: 9),
-            completedCount: 12,
-            target: 20,
-            bpm: 112,
-            beats: 4,
-            note: "四分音符"
-        )
-        let hanon = PrototypeMockSong(
-            name: "哈农 No.1",
-            group: "基本功",
-            sections: [hanonSection],
-            leftGoal: 20,
-            rightGoal: 20,
-            bothGoal: 0,
-            multiplier: 1,
-            resetsDaily: true,
-            endDate: calendar.date(byAdding: .month, value: 1, to: .now) ?? .now,
-            createdAt: calendar.date(byAdding: .month, value: -2, to: .now) ?? .now,
-            isArchived: false
-        )
-
-        let bachSection = PrototypeMockSection(
-            name: "主题与再现",
-            lastPracticed: date(daysAgo: 6),
-            completedCount: 0,
-            target: nil,
-            bpm: 72,
-            beats: 3,
-            note: "十六分音符"
-        )
-        let bach = PrototypeMockSong(
-            name: "巴赫创意曲",
-            group: "复调",
-            sections: [bachSection],
-            leftGoal: 8,
-            rightGoal: 8,
-            bothGoal: 8,
-            multiplier: 1,
-            resetsDaily: false,
-            endDate: calendar.date(byAdding: .month, value: 3, to: .now) ?? .now,
-            createdAt: calendar.date(byAdding: .month, value: -6, to: .now) ?? .now,
-            isArchived: true
-        )
-
-        let songs = [moon, hanon, bach]
-        var records: [PrototypeMockRecord] = []
-        for (songIndex, song) in songs.enumerated() {
-            for day in 0..<8 {
-                guard let section = song.sections[safe: day % song.sections.count] else { continue }
-                let hand = PrototypePracticeHand.allCases[(day + songIndex) % PrototypePracticeHand.allCases.count]
-                records.append(PrototypeMockRecord(
-                    songID: song.id,
-                    sectionID: section.id,
-                    sectionName: section.name,
-                    date: date(daysAgo: day + songIndex, hour: 16 + songIndex),
-                    hand: hand,
-                    bpm: section.bpm + (day % 3) * 2,
-                    note: section.note,
-                    duration: TimeInterval(120 + day * 38),
-                    count: 3 + (day * 2) % 12
-                ))
-            }
-        }
-        return (songs, records)
-    }
+    let song: PracticeSongSnapshot
+    let section: PracticeSectionSnapshot
 }
 
 private struct PrototypeDetailMetric: View {
@@ -1321,7 +2671,7 @@ private struct PrototypeDetailMetric: View {
                 .foregroundStyle(GeoTheme.muted)
         }
         .frame(maxWidth: .infinity, minHeight: 58)
-        .prototypeGlassSurface(cornerRadius: 13)
+        .geoCardSurface(cornerRadius: 13)
     }
 }
 

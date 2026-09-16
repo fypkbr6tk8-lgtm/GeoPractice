@@ -78,7 +78,7 @@ struct PracticeEventEditorView: View {
 
                     Section("练习目标") {
                         Toggle("开启目标", isOn: $goalEnabled)
-                            .tint(.white)
+                            .tint(GeoTheme.controlAccent)
 
                         if goalEnabled {
                             PracticeGoalTargetsEditor(

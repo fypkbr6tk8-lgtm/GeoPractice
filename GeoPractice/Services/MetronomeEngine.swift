@@ -83,6 +83,47 @@ struct MetronomeClickProfile: Equatable, Sendable {
             )
         }
     }
+
+    static func profile(
+        for kind: MetronomeClickKind,
+        sound: PracticeMetronomeSound
+    ) -> Self {
+        let base = profile(for: kind)
+        switch sound {
+        case .penetratingWoodblock:
+            return base
+        case .classicClick:
+            return Self(
+                frequency: base.frequency * 0.72,
+                targetPeak: base.targetPeak * 0.92,
+                duration: min(maximumDuration, base.duration * 0.82),
+                attackDuration: base.attackDuration * 0.78,
+                decayTimeConstant: base.decayTimeConstant * 0.72,
+                harmonicMix: base.harmonicMix * 0.62,
+                transientMix: min(1, base.transientMix * 1.35)
+            )
+        case .electronicPulse:
+            return Self(
+                frequency: base.frequency * 1.28,
+                targetPeak: min(maximumPeak, base.targetPeak * 0.88),
+                duration: min(maximumDuration, base.duration * 0.66),
+                attackDuration: base.attackDuration * 0.55,
+                decayTimeConstant: base.decayTimeConstant * 0.58,
+                harmonicMix: min(1, base.harmonicMix * 1.48),
+                transientMix: min(1, base.transientMix * 1.62)
+            )
+        case .softBlock:
+            return Self(
+                frequency: base.frequency * 0.58,
+                targetPeak: base.targetPeak * 0.72,
+                duration: min(maximumDuration, base.duration * 1.08),
+                attackDuration: base.attackDuration * 1.55,
+                decayTimeConstant: base.decayTimeConstant * 1.22,
+                harmonicMix: base.harmonicMix * 0.45,
+                transientMix: base.transientMix * 0.42
+            )
+        }
+    }
 }
 
 /// Offline renderer shared by the audio graph and unit tests. The waveform is
@@ -95,6 +136,17 @@ enum MetronomeClickWaveform {
     ) -> [Float] {
         samples(
             profile: MetronomeClickProfile.profile(for: kind),
+            sampleRate: sampleRate
+        )
+    }
+
+    static func samples(
+        for kind: MetronomeClickKind,
+        sound: PracticeMetronomeSound,
+        sampleRate: Double
+    ) -> [Float] {
+        samples(
+            profile: MetronomeClickProfile.profile(for: kind, sound: sound),
             sampleRate: sampleRate
         )
     }
@@ -238,9 +290,10 @@ final class MetronomeEngine: ObservableObject {
     @Published private(set) var currentSubdivision = 0
     @Published private(set) var currentCycle = 0
     @Published private(set) var lastPulse: BeatPlaybackPulse?
+    @Published private(set) var soundProfile: PracticeMetronomeSound
     @Published var errorMessage: String?
 
-    private var scheduler = BeatAudioScheduler()
+    private var scheduler: BeatAudioScheduler
     private var playbackToken = UUID()
     private var lastAcceptedPulseSequence: UInt64?
     private var pausedContinuation: BeatPlaybackContinuation?
@@ -250,14 +303,27 @@ final class MetronomeEngine: ObservableObject {
     init(
         preset: MetronomePreset = .standard,
         tempoSemantics: TempoSemantics = .independentReference,
-        tempoReferenceNote: TempoReferenceNote? = nil
+        tempoReferenceNote: TempoReferenceNote? = nil,
+        soundProfile: PracticeMetronomeSound = .penetratingWoodblock
     ) {
         let normalized = preset.normalized
         self.preset = normalized
         self.tempoSemantics = tempoSemantics
         self.tempoReferenceNote = tempoReferenceNote ?? normalized.referenceNote
+        self.soundProfile = soundProfile
+        scheduler = BeatAudioScheduler(soundProfile: soundProfile)
         groupingPreferences[normalized.beats] = normalized.grouping
         observeAudioSystem()
+    }
+
+    func setSoundProfile(_ sound: PracticeMetronomeSound) {
+        guard sound != soundProfile else { return }
+        let shouldResume = isPlaying
+        if shouldResume { pause() }
+        soundProfile = sound
+        scheduler.stop()
+        scheduler = BeatAudioScheduler(soundProfile: sound)
+        if shouldResume { start() }
     }
 
     var playbackPlan: MetronomePlaybackPlan {
@@ -265,6 +331,16 @@ final class MetronomeEngine: ObservableObject {
             semantics: tempoSemantics,
             referenceNote: tempoReferenceNote
         )
+    }
+
+    /// The preset that describes what the user is actually hearing. The
+    /// stored preset keeps a subscriber's chosen reference note so it can be
+    /// restored after resubscribing, while free playback and its statistics
+    /// are normalized to a quarter-note BPM reference.
+    var effectivePlaybackPreset: MetronomePreset {
+        var effective = preset
+        effective.referenceNote = playbackPlan.referenceNote
+        return effective.normalized
     }
 
     func apply(_ newPreset: MetronomePreset) {
@@ -348,6 +424,30 @@ final class MetronomeEngine: ObservableObject {
                 from: previousPlan,
                 previousPreset: previousPreset
             )
+        }
+    }
+
+    /// Enables or suspends the independent BPM reference-note feature without
+    /// destroying the value saved in the piece/session preset.
+    func setPremiumReferenceNoteAccess(_ isEnabled: Bool) {
+        let targetSemantics: TempoSemantics = isEnabled
+            ? .independentReference
+            : .legacyQuarterReference
+        let targetReference = isEnabled ? preset.referenceNote : .quarter
+        let previousPlan = playbackPlan
+        guard targetSemantics != tempoSemantics
+                || targetReference != tempoReferenceNote else { return }
+
+        objectWillChange.send()
+        tempoSemantics = targetSemantics
+        tempoReferenceNote = targetReference
+        if isPlaying {
+            updatePlayback(
+                from: previousPlan,
+                previousPreset: preset
+            )
+        } else {
+            invalidatePausedContinuationIfTopologyChanged(from: previousPlan)
         }
     }
 
@@ -602,7 +702,7 @@ final class MetronomeEngine: ObservableObject {
                     self.lastAcceptedPulseSequence = nil
                     self.pausedContinuation = continuation
                     self.scheduler.stop()
-                    self.scheduler = BeatAudioScheduler()
+                    self.scheduler = BeatAudioScheduler(soundProfile: self.soundProfile)
                     self.isPlaying = false
                     self.errorMessage = "音频服务已重置，请重新点击播放。"
                 }
@@ -636,8 +736,10 @@ private final class BeatAudioScheduler: @unchecked Sendable {
     private var schedulingTimer: DispatchSourceTimer?
     private var playbackSession: PlaybackSession?
     private var pendingRevision: PendingRevision?
+    private let soundProfile: PracticeMetronomeSound
 
-    init() {
+    init(soundProfile: PracticeMetronomeSound = .penetratingWoodblock) {
+        self.soundProfile = soundProfile
         prepareAudioGraph()
     }
 
@@ -873,6 +975,7 @@ private final class BeatAudioScheduler: @unchecked Sendable {
     ) -> AVAudioPCMBuffer {
         let waveform = MetronomeClickWaveform.samples(
             for: kind,
+            sound: soundProfile,
             sampleRate: format.sampleRate
         )
         let frameCount = AVAudioFrameCount(waveform.count)

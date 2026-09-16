@@ -205,7 +205,7 @@ struct PracticeEventsView: View {
                     .accessibilityLabel("新建练习或目录")
                 }
             }
-            .toolbarBackground(GeoTheme.background.opacity(0.94), for: .navigationBar)
+            .toolbarBackground(GeoTheme.background, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
             .navigationDestination(for: PracticeNavigationRoute.self) { route in
                 switch route {
@@ -586,8 +586,12 @@ private struct PracticeEventNavigationRow: View {
         .listRowInsets(EdgeInsets(top: 7, leading: 16, bottom: 7, trailing: 16))
         .listRowBackground(Color.clear)
         .listRowSeparator(.hidden)
-        .swipeActions(edge: .trailing) {
-            Button("删除", role: .destructive, action: onDelete)
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            // This action only requests confirmation. Marking it destructive
+            // makes SwiftUI optimistically remove the List row before the
+            // confirmation alert has committed the model deletion.
+            Button("删除", action: onDelete)
+                .tint(.red)
                 .disabled(event.id == protectedEventID)
                 .accessibilityHint(
                     event.id == protectedEventID
@@ -726,20 +730,7 @@ private struct PracticeEventRow: View {
             }
         }
         .padding(16)
-        .background {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [Color(white: 0.105).opacity(0.96), Color(white: 0.05).opacity(0.98)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-                .overlay {
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .stroke(Color.white.opacity(0.075), lineWidth: 1)
-                }
-        }
+        .geoCardSurface(cornerRadius: 18)
     }
 }
 
@@ -998,10 +989,7 @@ private struct PracticeEventDetailView: View {
         }
         .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
         .padding(.horizontal, 11)
-        .background(
-            Color.white.opacity(0.045),
-            in: RoundedRectangle(cornerRadius: 11, style: .continuous)
-        )
+        .geoCardSurface(cornerRadius: 11)
         .accessibilityElement(children: .combine)
     }
 
@@ -1022,10 +1010,7 @@ private struct PracticeEventDetailView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(11)
-        .background(
-            Color.white.opacity(0.035),
-            in: RoundedRectangle(cornerRadius: 11, style: .continuous)
-        )
+        .geoCardSurface(cornerRadius: 11)
         .accessibilityElement(children: .combine)
     }
 

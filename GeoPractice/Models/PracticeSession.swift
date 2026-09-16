@@ -25,23 +25,89 @@ struct HandPracticeStats: Codable, Equatable, Sendable {
     }
 }
 
+enum PracticeCompletionSource: String, Codable, Equatable, Sendable {
+    /// A real user `+1` action during a live metronome session.
+    case live
+    /// A count entered as one aggregate in the history backfill sheet.
+    case manualBackfill
+}
+
 /// One completed repetition at the exact metronome settings used for it.
 struct PracticeCompletionSample: Codable, Equatable, Identifiable, Sendable {
     let id: UUID
     let hand: PracticeHand
     let preset: MetronomePreset
     let completedAt: Date
+    /// Additive provenance. Payloads written before this field existed decode
+    /// as `.live`, preserving their historical tap-by-tap behavior.
+    let source: PracticeCompletionSource
+    /// Distinguishes an explicitly persisted `.live` value from a legacy
+    /// payload whose missing source merely decoded with the compatibility
+    /// default. This is intentionally preserved when re-encoding backups.
+    let hasExplicitSource: Bool
 
     init(
         id: UUID = UUID(),
         hand: PracticeHand,
         preset: MetronomePreset,
-        completedAt: Date = .now
+        completedAt: Date = .now,
+        source: PracticeCompletionSource = .live
     ) {
         self.id = id
         self.hand = hand
         self.preset = preset.normalized
         self.completedAt = completedAt
+        self.source = source
+        self.hasExplicitSource = true
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, hand, preset, completedAt, source
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        hand = try container.decode(PracticeHand.self, forKey: .hand)
+        preset = try container.decode(MetronomePreset.self, forKey: .preset).normalized
+        completedAt = try container.decode(Date.self, forKey: .completedAt)
+        if let decodedSource = try container.decodeIfPresent(
+            PracticeCompletionSource.self,
+            forKey: .source
+        ) {
+            source = decodedSource
+            hasExplicitSource = true
+        } else {
+            source = .live
+            hasExplicitSource = false
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(hand, forKey: .hand)
+        try container.encode(preset, forKey: .preset)
+        try container.encode(completedAt, forKey: .completedAt)
+        if hasExplicitSource {
+            try container.encode(source, forKey: .source)
+        }
+    }
+
+    static func manualBackfillBatch(
+        hand: PracticeHand,
+        preset: MetronomePreset,
+        count: Int,
+        completedAt: Date
+    ) -> [PracticeCompletionSample] {
+        (0..<max(0, count)).map { _ in
+            PracticeCompletionSample(
+                hand: hand,
+                preset: preset,
+                completedAt: completedAt,
+                source: .manualBackfill
+            )
+        }
     }
 }
 
@@ -139,6 +205,12 @@ struct PracticeSessionSummary: Codable, Equatable, Sendable {
     let right: HandPracticeStats
     let both: HandPracticeStats
     let completions: [PracticeCompletionSample]
+    /// The live metronome setting last used for each hand, even when the user
+    /// accumulated duration without tapping the explicit completion button.
+    /// Optional fields keep summaries written by older builds decodable.
+    let leftPreset: MetronomePreset?
+    let rightPreset: MetronomePreset?
+    let bothPreset: MetronomePreset?
     let goalLaunchContext: PracticeGoalLaunchContext?
     let goalReport: PracticeGoalReportSnapshot?
 
@@ -151,6 +223,9 @@ struct PracticeSessionSummary: Codable, Equatable, Sendable {
         right: HandPracticeStats = HandPracticeStats(),
         both: HandPracticeStats = HandPracticeStats(),
         completions: [PracticeCompletionSample] = [],
+        leftPreset: MetronomePreset? = nil,
+        rightPreset: MetronomePreset? = nil,
+        bothPreset: MetronomePreset? = nil,
         goalLaunchContext: PracticeGoalLaunchContext? = nil,
         goalReport: PracticeGoalReportSnapshot? = nil
     ) {
@@ -162,6 +237,9 @@ struct PracticeSessionSummary: Codable, Equatable, Sendable {
         self.right = right
         self.both = both
         self.completions = completions
+        self.leftPreset = leftPreset?.normalized
+        self.rightPreset = rightPreset?.normalized
+        self.bothPreset = bothPreset?.normalized
         self.goalLaunchContext = goalLaunchContext
         self.goalReport = goalReport
     }
@@ -176,6 +254,34 @@ struct PracticeSessionSummary: Codable, Equatable, Sendable {
 
     func speedSummary(for hand: PracticeHand) -> PracticeHandSpeedSummary {
         PracticeHandSpeedSummary(samples: completions, for: hand)
+    }
+
+    func preset(for hand: PracticeHand) -> MetronomePreset? {
+        switch hand {
+        case .left: leftPreset
+        case .right: rightPreset
+        case .both: bothPreset
+        }
+    }
+
+    func addingMissingPresets(
+        _ presetsByHand: [PracticeHand: MetronomePreset]
+    ) -> PracticeSessionSummary {
+        PracticeSessionSummary(
+            sessionID: sessionID,
+            sourceEventID: sourceEventID,
+            startedAt: startedAt,
+            finishedAt: finishedAt,
+            left: left,
+            right: right,
+            both: both,
+            completions: completions,
+            leftPreset: leftPreset ?? presetsByHand[.left],
+            rightPreset: rightPreset ?? presetsByHand[.right],
+            bothPreset: bothPreset ?? presetsByHand[.both],
+            goalLaunchContext: goalLaunchContext,
+            goalReport: goalReport
+        )
     }
 
     func goalProgress(for scope: PracticeGoalScope) -> PracticeGoalProgress? {
@@ -204,6 +310,7 @@ struct PracticeSessionSummary: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case sessionID, sourceEventID, startedAt, finishedAt
         case left, right, both, completions
+        case leftPreset, rightPreset, bothPreset
         case goalLaunchContext, goalReport
     }
 
@@ -223,6 +330,18 @@ struct PracticeSessionSummary: Codable, Equatable, Sendable {
             [PracticeCompletionSample].self,
             forKey: .completions
         ) ?? []
+        leftPreset = try container.decodeIfPresent(
+            MetronomePreset.self,
+            forKey: .leftPreset
+        )?.normalized
+        rightPreset = try container.decodeIfPresent(
+            MetronomePreset.self,
+            forKey: .rightPreset
+        )?.normalized
+        bothPreset = try container.decodeIfPresent(
+            MetronomePreset.self,
+            forKey: .bothPreset
+        )?.normalized
         goalLaunchContext = try container.decodeIfPresent(
             PracticeGoalLaunchContext.self,
             forKey: .goalLaunchContext
@@ -270,6 +389,7 @@ struct PracticeSession: Codable, Equatable, Sendable {
     mutating func begin(
         sourceEventID: UUID? = nil,
         goalContext: PracticeGoalLaunchContext? = nil,
+        initialHand: PracticeHand = .both,
         at date: Date
     ) {
         guard phase == .idle else { return }
@@ -280,7 +400,7 @@ struct PracticeSession: Codable, Equatable, Sendable {
         } else {
             goalLaunchContext = nil
         }
-        currentHand = .both
+        currentHand = initialHand
         startedAt = date
         segmentStartedAt = date
         phase = .running
@@ -380,8 +500,14 @@ struct PracticeSession: Codable, Equatable, Sendable {
     }
 
     @discardableResult
-    mutating func finish(at date: Date) -> PracticeSessionSummary? {
-        if phase == .finished { return completedSummary }
+    mutating func finish(
+        at date: Date,
+        presetsByHand: [PracticeHand: MetronomePreset] = [:]
+    ) -> PracticeSessionSummary? {
+        if phase == .finished {
+            completedSummary = completedSummary?.addingMissingPresets(presetsByHand)
+            return completedSummary
+        }
         guard phase == .running || phase == .paused else { return nil }
 
         let finishedAt: Date
@@ -415,6 +541,9 @@ struct PracticeSession: Codable, Equatable, Sendable {
             right: right,
             both: both,
             completions: completions,
+            leftPreset: presetsByHand[.left],
+            rightPreset: presetsByHand[.right],
+            bothPreset: presetsByHand[.both],
             goalLaunchContext: goalLaunchContext,
             goalReport: goalReport
         )

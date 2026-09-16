@@ -39,14 +39,7 @@ struct PracticeGoalTargetsEditor: View {
             .foregroundStyle(GeoTheme.muted)
         }
         .padding(12)
-        .background(
-            Color.white.opacity(0.045),
-            in: RoundedRectangle(cornerRadius: 15, style: .continuous)
-        )
-        .overlay {
-            RoundedRectangle(cornerRadius: 15, style: .continuous)
-                .stroke(Color.white.opacity(0.08), lineWidth: 1)
-        }
+        .geoCardSurface(cornerRadius: 15)
     }
 
     private func targetField(for hand: PracticeHand) -> some View {

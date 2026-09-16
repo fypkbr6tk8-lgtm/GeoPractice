@@ -1,9 +1,403 @@
 import XCTest
 import SwiftData
 import SwiftUI
+import CoreLocation
 @testable import GeoPractice
 
 final class MetronomePresetTests: XCTestCase {
+    func testPrototypeCountDisplayUsesNumericOnlyForFreePractice() {
+        XCTAssertEqual(
+            PrototypePracticeCountDisplay.text(
+                completed: 4,
+                target: nil,
+                hasAssignedTask: false
+            ),
+            "4"
+        )
+        XCTAssertEqual(
+            PrototypePracticeCountDisplay.text(
+                completed: 4,
+                target: nil,
+                hasAssignedTask: true
+            ),
+            "4 次"
+        )
+        XCTAssertEqual(
+            PrototypePracticeCountDisplay.text(
+                completed: 4,
+                target: 10,
+                hasAssignedTask: true
+            ),
+            "4/10"
+        )
+    }
+
+    func testPrototypeMonthDayLabelNeverAddsLocalizedDaySuffix() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+        let date = try XCTUnwrap(
+            calendar.date(from: DateComponents(year: 2026, month: 8, day: 27))
+        )
+
+        let text = PrototypeMonthDayLabel.text(for: date, calendar: calendar)
+        XCTAssertEqual(text, "27")
+        XCTAssertFalse(text.contains("日"))
+    }
+
+    func testPrototypeWeeklyBarsStayInsideChartAndPreserveRelativeScale() {
+        let availableHeight: CGFloat = 90
+        let plotHeight = availableHeight
+            - PrototypeWeeklyChartLayout.labelHeight
+            - PrototypeWeeklyChartLayout.labelSpacing
+
+        XCTAssertEqual(
+            PrototypeWeeklyChartLayout.barHeight(
+                count: 45,
+                maximumCount: 45,
+                availableHeight: availableHeight
+            ),
+            plotHeight,
+            accuracy: 0.001
+        )
+        XCTAssertEqual(
+            PrototypeWeeklyChartLayout.barHeight(
+                count: 15,
+                maximumCount: 45,
+                availableHeight: availableHeight
+            ),
+            plotHeight / 3,
+            accuracy: 0.001
+        )
+        XCTAssertLessThanOrEqual(
+            PrototypeWeeklyChartLayout.barHeight(
+                count: 90,
+                maximumCount: 45,
+                availableHeight: availableHeight
+            ),
+            plotHeight
+        )
+    }
+
+    func testPrototypeWeeklyBarsHandleEmptyAndConstrainedCharts() {
+        XCTAssertEqual(
+            PrototypeWeeklyChartLayout.barHeight(
+                count: 0,
+                maximumCount: 0,
+                availableHeight: 90
+            ),
+            PrototypeWeeklyChartLayout.minimumBarHeight,
+            accuracy: 0.001
+        )
+        XCTAssertEqual(
+            PrototypeWeeklyChartLayout.barHeight(
+                count: 999,
+                maximumCount: 999,
+                availableHeight: 12
+            ),
+            0,
+            accuracy: 0.001
+        )
+    }
+
+    func testShareReceiptPermissionDenialStillResolvesShareableSnapshot() {
+        let snapshot = PrototypeShareEnvironmentSnapshot.resolve(
+            location: .denied
+        )
+
+        XCTAssertEqual(snapshot.locationText, "LOCATION NOT SHARED")
+        XCTAssertFalse(snapshot.sourceText.isEmpty)
+        XCTAssertNotEqual(snapshot, .loading)
+    }
+
+    func testShareReceiptUsesUppercaseEnglishCityAndRegion() throws {
+        let location = PrototypeShareEnglishLocationFormatter.formatted(
+            city: "Xi'an",
+            region: "Shaanxi",
+            country: "China"
+        )
+        let snapshot = PrototypeShareEnvironmentSnapshot.resolve(
+            location: .available(location: try XCTUnwrap(location))
+        )
+
+        XCTAssertEqual(snapshot.locationText, "XI’AN, SHAANXI")
+        XCTAssertTrue(snapshot.sourceText.contains("本次分享"))
+        XCTAssertNotEqual(snapshot, .loading)
+    }
+
+    func testShareReceiptLocationFormatterFallsBackWithoutDuplicatingRegion() {
+        XCTAssertEqual(
+            PrototypeShareEnglishLocationFormatter.formatted(
+                city: "Singapore",
+                region: "Singapore",
+                country: "Singapore"
+            ),
+            "SINGAPORE"
+        )
+        XCTAssertEqual(
+            PrototypeShareEnglishLocationFormatter.formatted(
+                city: nil,
+                region: nil,
+                country: "Japan"
+            ),
+            "JAPAN"
+        )
+    }
+
+    func testShareReceiptPrimaryTotalsAggregateLeftTogetherAndRight() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+        let firstDay = try XCTUnwrap(
+            calendar.date(from: DateComponents(year: 2026, month: 8, day: 28, hour: 9))
+        )
+        let secondDay = try XCTUnwrap(
+            calendar.date(from: DateComponents(year: 2026, month: 8, day: 29, hour: 10))
+        )
+        let entries = [
+            PrototypeShareReceiptEntry(
+                hand: .left,
+                date: firstDay,
+                count: 2,
+                duration: 11
+            ),
+            PrototypeShareReceiptEntry(
+                hand: .both,
+                date: firstDay,
+                count: 3,
+                duration: 22
+            ),
+            PrototypeShareReceiptEntry(
+                hand: .right,
+                date: secondDay,
+                count: 5,
+                duration: 33
+            )
+        ]
+
+        let metrics = PrototypeShareReceiptMetrics.resolve(
+            entries: entries,
+            calendar: calendar
+        )
+
+        XCTAssertEqual(metrics.totalCount, 10)
+        XCTAssertEqual(metrics.totalDuration, 66)
+        XCTAssertEqual(metrics.activeDayCount, 2)
+    }
+
+    func testShareReceiptAllTimeOverridesReplaceCountsButKeepAllHandDuration() {
+        let entries = [
+            PrototypeShareReceiptEntry(hand: .left, date: .now, count: 1, duration: 10),
+            PrototypeShareReceiptEntry(hand: .both, date: .now, count: 1, duration: 20),
+            PrototypeShareReceiptEntry(hand: .right, date: .now, count: 1, duration: 30)
+        ]
+
+        let metrics = PrototypeShareReceiptMetrics.resolve(
+            entries: entries,
+            countOverrides: [.left: 7, .both: 11, .right: 13]
+        )
+
+        XCTAssertEqual(metrics.totalCount, 31)
+        XCTAssertEqual(metrics.totalDuration, 60)
+    }
+
+    func testShareReceiptSongListKeepsEveryRecordedSongAndUsesStableIDs() throws {
+        let firstID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+        let secondID = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
+        let durationOnlyID = UUID(uuidString: "00000000-0000-0000-0000-000000000003")!
+        let ignoredID = UUID(uuidString: "00000000-0000-0000-0000-000000000004")!
+        let oldDate = Date(timeIntervalSince1970: 100)
+        let newDate = Date(timeIntervalSince1970: 200)
+
+        let songs = PrototypeShareSongSummary.resolve(records: [
+            PrototypeShareSongEntry(
+                songID: firstID,
+                name: "同名曲目",
+                date: oldDate,
+                count: 1,
+                duration: 10
+            ),
+            PrototypeShareSongEntry(
+                songID: firstID,
+                name: "已重命名曲目",
+                date: newDate,
+                count: 1,
+                duration: 20
+            ),
+            PrototypeShareSongEntry(
+                songID: secondID,
+                name: "同名曲目",
+                date: newDate,
+                count: 1,
+                duration: 5
+            ),
+            PrototypeShareSongEntry(
+                songID: durationOnlyID,
+                name: "只计时曲目",
+                date: newDate,
+                count: 0,
+                duration: 30
+            ),
+            PrototypeShareSongEntry(
+                songID: ignoredID,
+                name: "空记录",
+                date: newDate,
+                count: 0,
+                duration: 0
+            )
+        ])
+
+        XCTAssertEqual(songs.count, 3)
+        XCTAssertEqual(songs.map(\.songID), [firstID, secondID, durationOnlyID])
+        let renamed = try XCTUnwrap(songs.first { $0.songID == firstID })
+        XCTAssertEqual(renamed.name, "已重命名曲目")
+        XCTAssertEqual(renamed.count, 2)
+        XCTAssertEqual(renamed.duration, 30)
+        XCTAssertTrue(songs.contains { $0.songID == secondID && $0.name == "同名曲目" })
+        XCTAssertTrue(songs.contains { $0.songID == durationOnlyID && $0.count == 0 })
+        XCTAssertFalse(songs.contains { $0.songID == ignoredID })
+    }
+
+    func testShareReceiptAllTimeSongOverridesIncludeLegacyOnlyAggregate() throws {
+        let songID = UUID(uuidString: "00000000-0000-0000-0000-000000000011")!
+        let latestDate = Date(timeIntervalSince1970: 300)
+
+        let songs = PrototypeShareSongSummary.resolve(
+            records: [],
+            allTimeOverrides: [
+                PrototypeShareSongAggregate(
+                    songID: songID,
+                    name: "旧数据曲目",
+                    count: 7,
+                    duration: 90,
+                    latestDate: latestDate,
+                    isArchived: false
+                )
+            ]
+        )
+
+        let song = try XCTUnwrap(songs.first)
+        XCTAssertEqual(songs.count, 1)
+        XCTAssertEqual(song.songID, songID)
+        XCTAssertEqual(song.count, 7)
+        XCTAssertEqual(song.duration, 90)
+    }
+
+    func testShareReceiptAllTimeSongOverridesReplaceMixedAttemptsWithoutDoubleCounting() throws {
+        let songID = UUID(uuidString: "00000000-0000-0000-0000-000000000012")!
+        let attemptDate = Date(timeIntervalSince1970: 100)
+        let aggregateDate = Date(timeIntervalSince1970: 400)
+
+        let songs = PrototypeShareSongSummary.resolve(
+            records: [
+                PrototypeShareSongEntry(
+                    songID: songID,
+                    name: "混合数据曲目",
+                    date: attemptDate,
+                    count: 2,
+                    duration: 20
+                )
+            ],
+            allTimeOverrides: [
+                PrototypeShareSongAggregate(
+                    songID: songID,
+                    name: "混合数据曲目",
+                    count: 5,
+                    duration: 50,
+                    latestDate: aggregateDate,
+                    isArchived: false
+                )
+            ]
+        )
+
+        let song = try XCTUnwrap(songs.first)
+        XCTAssertEqual(song.count, 5)
+        XCTAssertEqual(song.duration, 50)
+        XCTAssertEqual(song.latestDate, aggregateDate)
+
+        let metrics = PrototypeShareReceiptMetrics.resolve(
+            entries: [
+                PrototypeShareReceiptEntry(
+                    hand: .left,
+                    date: attemptDate,
+                    count: 2,
+                    duration: 20
+                )
+            ],
+            countOverrides: [.left: 5, .both: 0, .right: 0],
+            totalDurationOverride: 50
+        )
+        XCTAssertEqual(metrics.totalCount, 5)
+        XCTAssertEqual(metrics.totalDuration, 50)
+    }
+
+    func testShareReceiptAllTimeOverridesKeepArchivedDurationOnlySong() throws {
+        let archivedID = UUID(uuidString: "00000000-0000-0000-0000-000000000013")!
+
+        let songs = PrototypeShareSongSummary.resolve(
+            records: [],
+            allTimeOverrides: [
+                PrototypeShareSongAggregate(
+                    songID: archivedID,
+                    name: "已归档计时曲目",
+                    count: 0,
+                    duration: 42,
+                    latestDate: .distantPast,
+                    isArchived: true
+                )
+            ]
+        )
+
+        let song = try XCTUnwrap(songs.first)
+        XCTAssertEqual(song.songID, archivedID)
+        XCTAssertEqual(song.count, 0)
+        XCTAssertEqual(song.duration, 42)
+    }
+
+    func testShareReceiptLayoutGrowsForEveryAdditionalSong() {
+        XCTAssertEqual(PrototypeShareReceiptLayout.size(songCount: 0).width, 720)
+        XCTAssertEqual(PrototypeShareReceiptLayout.size(songCount: 1).height, 1_360)
+        XCTAssertEqual(PrototypeShareReceiptLayout.size(songCount: 2).height, 1_454)
+        XCTAssertEqual(PrototypeShareReceiptLayout.size(songCount: 10).height, 2_206)
+    }
+
+    func testShareLocationCandidateRejectsStaleAndInaccurateLocations() throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let stale = CLLocation(
+            coordinate: CLLocationCoordinate2D(latitude: 31.23, longitude: 121.47),
+            altitude: 0,
+            horizontalAccuracy: 5,
+            verticalAccuracy: 5,
+            timestamp: now.addingTimeInterval(-121)
+        )
+        let inaccurate = CLLocation(
+            coordinate: CLLocationCoordinate2D(latitude: 30.27, longitude: 120.15),
+            altitude: 0,
+            horizontalAccuracy: 10_001,
+            verticalAccuracy: 5,
+            timestamp: now
+        )
+        let fresh = CLLocation(
+            coordinate: CLLocationCoordinate2D(latitude: 22.54, longitude: 114.06),
+            altitude: 0,
+            horizontalAccuracy: 800,
+            verticalAccuracy: 5,
+            timestamp: now.addingTimeInterval(-2)
+        )
+
+        let selected = PrototypeShareLocationCandidate.best(
+            from: [stale, inaccurate, fresh],
+            now: now
+        )
+
+        XCTAssertEqual(selected?.coordinate.latitude, fresh.coordinate.latitude)
+        XCTAssertEqual(selected?.coordinate.longitude, fresh.coordinate.longitude)
+        XCTAssertNil(
+            PrototypeShareLocationCandidate.best(
+                from: [stale, inaccurate],
+                now: now
+            )
+        )
+    }
+
     func testTempoNameBoundaries() {
         let cases: [(Int, String)] = [
             (30, "Largo"), (54, "Largo"),
@@ -370,7 +764,7 @@ final class MetronomePresetTests: XCTestCase {
         }
     }
 
-    func testEachMeasureRebuildsGeometryFromTheHorizontalSlot() {
+    func testCompleteGeometryPersistsAndRotatesAcrossMeasures() {
         var lifecycle = BeatVisualLifecycle(beats: 4)
 
         XCTAssertEqual(lifecycle.phase, .origin)
@@ -384,21 +778,21 @@ final class MetronomePresetTests: XCTestCase {
         XCTAssertFalse(lifecycle.hasEstablishedStructure)
 
         for beat in 0..<4 {
-            lifecycle.record(beat: beat, subdivision: 0, cycle: 1, beats: 4)
+            lifecycle.record(beat: beat, subdivision: 0, cycle: 0, beats: 4)
         }
 
         XCTAssertEqual(lifecycle.phase, .orbiting)
         XCTAssertEqual(lifecycle.visibleBeatIndices, [0, 1, 2, 3])
         XCTAssertTrue(lifecycle.hasEstablishedStructure)
 
-        lifecycle.record(beat: 0, subdivision: 0, cycle: 2, beats: 4)
-        XCTAssertEqual(lifecycle.visibleEdgeIndices, [0])
-        XCTAssertFalse(lifecycle.hasEstablishedStructure)
+        lifecycle.record(beat: 0, subdivision: 0, cycle: 1, beats: 4)
+        XCTAssertEqual(lifecycle.visibleEdgeIndices, [0, 3, 2, 1])
+        XCTAssertTrue(lifecycle.hasEstablishedStructure)
 
         lifecycle.record(beat: 2, subdivision: 0, cycle: 100, beats: 4)
 
-        XCTAssertEqual(lifecycle.visibleEdgeIndices, [2, 1, 0])
-        XCTAssertFalse(lifecycle.hasEstablishedStructure)
+        XCTAssertEqual(lifecycle.visibleEdgeIndices, [2, 1, 0, 3])
+        XCTAssertTrue(lifecycle.hasEstablishedStructure)
     }
 
     func testFourBeatEighthNoteProducesEightFixedPulseAddresses() throws {
@@ -1768,6 +2162,24 @@ final class MetronomePresetTests: XCTestCase {
         XCTAssertEqual(session.stats(for: .left, at: start.addingTimeInterval(10)).durationMilliseconds, 0)
     }
 
+    func testPracticeSessionCanBeginOnAnExplicitInitialHand() {
+        let start = Date(timeIntervalSinceReferenceDate: 1_500)
+        var session = PracticeSession()
+
+        session.begin(initialHand: .left, at: start)
+
+        XCTAssertEqual(session.phase, .running)
+        XCTAssertEqual(session.currentHand, .left)
+        XCTAssertEqual(
+            session.stats(for: .left, at: start.addingTimeInterval(1.25)).durationMilliseconds,
+            1_250
+        )
+        XCTAssertEqual(
+            session.stats(for: .both, at: start.addingTimeInterval(1.25)).durationMilliseconds,
+            0
+        )
+    }
+
     func testPracticeSessionSwitchesHandsAndFinishIsIdempotent() {
         let start = Date(timeIntervalSinceReferenceDate: 2_000)
         let sourceEventID = UUID()
@@ -1985,6 +2397,294 @@ final class MetronomePresetTests: XCTestCase {
         XCTAssertEqual(restored.session.stats(for: .left, at: start).durationMilliseconds, 3_000)
         XCTAssertEqual(restored.session.stats(for: .left, at: start).count, 3)
         XCTAssertEqual(restored.sessionPreset, preset.normalized)
+    }
+
+    @MainActor
+    func testProductCountActionAddsExactlyOneIndependentOfMeter() {
+        for beats in [4, 9] {
+            let suiteName = "GeoPracticeTests.\(UUID().uuidString)"
+            let defaults = UserDefaults(suiteName: suiteName)!
+            defer { defaults.removePersistentDomain(forName: suiteName) }
+
+            let start = Date(timeIntervalSinceReferenceDate: 7_250 + Double(beats))
+            var preset = MetronomePreset.standard
+            preset.beats = beats
+            let controller = PracticeSessionController(defaults: defaults)
+            controller.begin(
+                preset: preset,
+                initialHand: .left,
+                at: start
+            )
+
+            PrototypePracticeCountAction.recordOne(
+                on: controller,
+                for: .left,
+                preset: preset,
+                at: start.addingTimeInterval(1)
+            )
+
+            XCTAssertEqual(
+                controller.session.stats(for: .left, at: start).count,
+                1,
+                "\(beats)拍只描述节拍结构，一次点击仍必须只记录一次"
+            )
+            XCTAssertEqual(controller.session.completionSamples(for: .left).count, 1)
+            XCTAssertEqual(
+                controller.session.completionSamples(for: .left).first?.preset.beats,
+                beats
+            )
+        }
+    }
+
+    @MainActor
+    func testControllerKeepsOneLivePresetWhilePersistingPerHandUsageSnapshots() {
+        let suiteName = "GeoPracticeTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let start = Date(timeIntervalSinceReferenceDate: 7_500)
+        var leftPreset = MetronomePreset.standard
+        leftPreset.bpm = 72
+        leftPreset.beats = 4
+        var rightPreset = MetronomePreset.standard
+        rightPreset.bpm = 132
+        rightPreset.beats = 5
+        rightPreset.grouping = "3+2"
+        var bothPreset = MetronomePreset.standard
+        bothPreset.bpm = 96
+        bothPreset.beats = 7
+        bothPreset.grouping = "2+3+2"
+
+        let original = PracticeSessionController(defaults: defaults)
+        original.begin(
+            preset: leftPreset,
+            initialHand: .left,
+            at: start
+        )
+        original.updateLivePreset(leftPreset, at: start)
+        original.switchHand(to: .right, at: start.addingTimeInterval(1))
+        original.updateLivePreset(rightPreset, at: start.addingTimeInterval(1))
+        original.switchHand(to: .both, at: start.addingTimeInterval(2))
+        original.updateLivePreset(bothPreset, at: start.addingTimeInterval(2))
+        original.switchHand(to: .left, at: start.addingTimeInterval(3))
+        XCTAssertEqual(
+            original.sessionPreset,
+            bothPreset.normalized,
+            "切换记录手型不得加载该手以前的节拍器配置"
+        )
+        original.persistSnapshot(at: start.addingTimeInterval(4))
+
+        let restored = PracticeSessionController(defaults: defaults)
+        XCTAssertEqual(restored.session.phase, .paused)
+        XCTAssertEqual(restored.session.currentHand, .left)
+        XCTAssertEqual(restored.sessionPreset, bothPreset.normalized)
+        XCTAssertEqual(restored.sessionPresetsByHand[.left], bothPreset.normalized)
+        XCTAssertEqual(restored.sessionPresetsByHand[.right], rightPreset.normalized)
+        XCTAssertEqual(restored.sessionPresetsByHand[.both], bothPreset.normalized)
+
+        restored.switchHand(to: .right, at: start.addingTimeInterval(5))
+        XCTAssertEqual(restored.sessionPreset, bothPreset.normalized)
+        restored.switchHand(to: .both, at: start.addingTimeInterval(6))
+        XCTAssertEqual(restored.sessionPreset, bothPreset.normalized)
+        XCTAssertEqual(
+            restored.sessionPresetsByHand[.right],
+            bothPreset.normalized,
+            "目标手型的历史快照应更新为本次真正使用的当前配置"
+        )
+    }
+
+    @MainActor
+    func testSwitchingHandKeepsLiveMetronomeConfigurationAndRecordsItsPreset() throws {
+        let suiteName = "GeoPracticeTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let start = Date(timeIntervalSinceReferenceDate: 7_550)
+        var livePreset = MetronomePreset.standard
+        livePreset.bpm = 137
+        livePreset.beats = 5
+        livePreset.grouping = "3+2"
+        livePreset.subdivision = 4
+        livePreset.referenceNote = .dottedQuarter
+
+        let controller = PracticeSessionController(defaults: defaults)
+        controller.begin(
+            preset: livePreset,
+            initialHand: .left,
+            at: start
+        )
+
+        controller.switchHand(to: .right, at: start.addingTimeInterval(1))
+
+        XCTAssertEqual(controller.session.currentHand, .right)
+        XCTAssertEqual(controller.sessionPreset, livePreset.normalized)
+        XCTAssertEqual(
+            controller.sessionPresetsByHand[.right],
+            livePreset.normalized
+        )
+
+        controller.recordCompletion(
+            for: .right,
+            preset: try XCTUnwrap(controller.sessionPreset),
+            at: start.addingTimeInterval(2)
+        )
+        let sample = try XCTUnwrap(
+            controller.session.completionSamples(for: .right).last
+        )
+        XCTAssertEqual(sample.hand, .right)
+        XCTAssertEqual(sample.preset, livePreset.normalized)
+    }
+
+    @MainActor
+    func testControllerFinishCarriesEveryTimedHandsPresetWithoutCompletions() throws {
+        let suiteName = "GeoPracticeTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let start = Date(timeIntervalSinceReferenceDate: 7_625)
+        var leftPreset = MetronomePreset.standard
+        leftPreset.bpm = 72
+        var rightPreset = MetronomePreset.standard
+        rightPreset.bpm = 132
+        var bothPreset = MetronomePreset.standard
+        bothPreset.bpm = 96
+
+        let controller = PracticeSessionController(defaults: defaults)
+        controller.begin(
+            preset: leftPreset,
+            initialHand: .left,
+            at: start
+        )
+        controller.switchHand(to: .right, at: start.addingTimeInterval(2))
+        controller.updateLivePreset(
+            rightPreset,
+            at: start.addingTimeInterval(2)
+        )
+        controller.switchHand(to: .both, at: start.addingTimeInterval(4))
+        controller.updateLivePreset(
+            bothPreset,
+            at: start.addingTimeInterval(4)
+        )
+
+        let summary = try XCTUnwrap(
+            controller.finish(at: start.addingTimeInterval(6))
+        )
+        XCTAssertTrue(summary.completions.isEmpty)
+        XCTAssertEqual(summary.left.durationMilliseconds, 2_000)
+        XCTAssertEqual(summary.right.durationMilliseconds, 2_000)
+        XCTAssertEqual(summary.both.durationMilliseconds, 2_000)
+        XCTAssertEqual(summary.preset(for: .left), leftPreset.normalized)
+        XCTAssertEqual(summary.preset(for: .right), rightPreset.normalized)
+        XCTAssertEqual(summary.preset(for: .both), bothPreset.normalized)
+        XCTAssertEqual(controller.session.reviewSummary, summary)
+    }
+
+    @MainActor
+    func testControllerMigratesLegacySinglePresetToTheDraftsCurrentHand() throws {
+        struct LegacyDraftEnvelope: Encodable {
+            let session: PracticeSession
+            let savedAt: Date
+            let preset: MetronomePreset?
+        }
+
+        let suiteName = "GeoPracticeTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let start = Date(timeIntervalSinceReferenceDate: 7_750)
+        let savedAt = start.addingTimeInterval(3)
+        var legacyPreset = MetronomePreset.standard
+        legacyPreset.bpm = 148
+        legacyPreset.beats = 5
+        legacyPreset.grouping = "2+3"
+        var legacySession = PracticeSession()
+        legacySession.begin(at: start)
+        legacySession.switchHand(to: .right, at: start.addingTimeInterval(1))
+        let data = try JSONEncoder().encode(LegacyDraftEnvelope(
+            session: legacySession,
+            savedAt: savedAt,
+            preset: legacyPreset
+        ))
+        defaults.set(data, forKey: "practiceSessionDraft.v1")
+
+        let restored = PracticeSessionController(defaults: defaults)
+        XCTAssertEqual(restored.session.phase, .paused)
+        XCTAssertEqual(restored.session.currentHand, .right)
+        XCTAssertEqual(restored.sessionPreset, legacyPreset.normalized)
+        XCTAssertEqual(
+            restored.sessionPresetsByHand,
+            [.right: legacyPreset.normalized]
+        )
+    }
+
+    @MainActor
+    func testDraftScalarLivePresetWinsOverConflictingPerHandHistory() throws {
+        struct DraftEnvelope: Encodable {
+            let session: PracticeSession
+            let savedAt: Date
+            let preset: MetronomePreset?
+            let presetsByHand: [PracticeHand: MetronomePreset]?
+        }
+
+        let suiteName = "GeoPracticeTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let start = Date(timeIntervalSinceReferenceDate: 7_800)
+        var livePreset = MetronomePreset.standard
+        livePreset.bpm = 121
+        livePreset.beats = 7
+        livePreset.grouping = "4+3"
+        var staleRightHistory = MetronomePreset.standard
+        staleRightHistory.bpm = 64
+        staleRightHistory.beats = 3
+
+        var session = PracticeSession()
+        session.begin(initialHand: .right, at: start)
+        let data = try JSONEncoder().encode(DraftEnvelope(
+            session: session,
+            savedAt: start.addingTimeInterval(2),
+            preset: livePreset,
+            presetsByHand: [.right: staleRightHistory]
+        ))
+        defaults.set(data, forKey: "practiceSessionDraft.v1")
+
+        let restored = PracticeSessionController(defaults: defaults)
+        XCTAssertEqual(restored.session.currentHand, .right)
+        XCTAssertEqual(restored.sessionPreset, livePreset.normalized)
+        XCTAssertEqual(
+            restored.sessionPresetsByHand[.right],
+            staleRightHistory.normalized,
+            "历史快照可保留，但不得覆盖唯一的当前节拍器配置"
+        )
+
+        restored.switchHand(to: .left, at: start.addingTimeInterval(3))
+        restored.switchHand(to: .right, at: start.addingTimeInterval(4))
+        XCTAssertEqual(restored.sessionPreset, livePreset.normalized)
+        XCTAssertEqual(restored.sessionPresetsByHand[.right], livePreset.normalized)
+    }
+
+    func testLegacyPracticeSessionSummaryWithoutPresetSnapshotsStillDecodes() throws {
+        let summary = PracticeSessionSummary(
+            finishedAt: Date(timeIntervalSinceReferenceDate: 7_875),
+            left: HandPracticeStats(count: 1, durationMilliseconds: 2_000)
+        )
+        let encoded = try JSONEncoder().encode(summary)
+        var legacyJSON = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+        legacyJSON.removeValue(forKey: "leftPreset")
+        legacyJSON.removeValue(forKey: "rightPreset")
+        legacyJSON.removeValue(forKey: "bothPreset")
+
+        let restored = try JSONDecoder().decode(
+            PracticeSessionSummary.self,
+            from: JSONSerialization.data(withJSONObject: legacyJSON)
+        )
+        XCTAssertEqual(restored.left, summary.left)
+        XCTAssertNil(restored.preset(for: .left))
+        XCTAssertNil(restored.preset(for: .right))
+        XCTAssertNil(restored.preset(for: .both))
     }
 
     @MainActor
@@ -2569,6 +3269,132 @@ final class MetronomePresetTests: XCTestCase {
             try event.inheritedPreset(for: .both, in: context),
             bothPreset.normalized
         )
+    }
+
+    @MainActor
+    func testStatisticsSnapshotKeepsDistinctPresetForEveryPracticedHand() throws {
+        let container = try makeInMemoryPracticeContainer()
+        let context = container.mainContext
+        let event = PracticeEvent(name: "三手速度")
+        context.insert(event)
+
+        var leftPreset = MetronomePreset.standard
+        leftPreset.bpm = 72
+        leftPreset.subdivision = 2
+
+        var rightPreset = MetronomePreset.standard
+        rightPreset.bpm = 132
+        rightPreset.subdivision = 4
+
+        var bothPreset = MetronomePreset.standard
+        bothPreset.bpm = 96
+        bothPreset.subdivision = 1
+
+        let start = Date(timeIntervalSinceReferenceDate: 16_250)
+        var session = PracticeSession()
+        session.begin(sourceEventID: event.id, at: start)
+        _ = session.recordCompletion(
+            for: .left,
+            preset: leftPreset,
+            at: start.addingTimeInterval(1)
+        )
+        _ = session.recordCompletion(
+            for: .right,
+            preset: rightPreset,
+            at: start.addingTimeInterval(2)
+        )
+        _ = session.recordCompletion(
+            for: .both,
+            preset: bothPreset,
+            at: start.addingTimeInterval(3)
+        )
+
+        let summary = try XCTUnwrap(session.finish(at: start.addingTimeInterval(4)))
+        let attempt = try event.commit(summary: summary, in: context).attempt
+        let snapshot = attempt.statisticsSnapshot
+
+        XCTAssertEqual(snapshot.leftPreset, leftPreset.normalized)
+        XCTAssertEqual(snapshot.rightPreset, rightPreset.normalized)
+        XCTAssertEqual(snapshot.bothPreset, bothPreset.normalized)
+        XCTAssertEqual(snapshot.preset(for: .left), leftPreset.normalized)
+        XCTAssertEqual(snapshot.preset(for: .right), rightPreset.normalized)
+        XCTAssertEqual(snapshot.preset(for: .both), bothPreset.normalized)
+        XCTAssertEqual(snapshot.bpm, bothPreset.bpm, "旧统计页仍使用整次练习最后一组参数")
+    }
+
+    @MainActor
+    func testDurationOnlyAttemptPresetSurvivesPersistentStoreReopen() throws {
+        let storeDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("GeoPracticeAttemptPresetTests")
+            .appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(
+            at: storeDirectory,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: storeDirectory) }
+        let storeURL = storeDirectory.appendingPathComponent("GeoPractice.store")
+        let eventID = UUID()
+        let sessionID = UUID()
+        var leftPreset = MetronomePreset.standard
+        leftPreset.bpm = 137
+        leftPreset.beats = 5
+        leftPreset.grouping = "3+2"
+        leftPreset.subdivision = 4
+
+        let schema = Schema([
+            PracticeSong.self,
+            PracticeEvent.self,
+            PracticeAttempt.self,
+            PracticeFolder.self,
+            PracticeDailyGoal.self
+        ])
+
+        do {
+            let configuration = ModelConfiguration(
+                "GeoPractice",
+                schema: schema,
+                url: storeURL,
+                cloudKitDatabase: .none
+            )
+            let container = try ModelContainer(
+                for: schema,
+                configurations: [configuration]
+            )
+            let context = container.mainContext
+            let event = PracticeEvent(id: eventID, name: "只计时练习")
+            context.insert(event)
+            let summary = PracticeSessionSummary(
+                sessionID: sessionID,
+                sourceEventID: eventID,
+                startedAt: Date(timeIntervalSinceReferenceDate: 16_300),
+                finishedAt: Date(timeIntervalSinceReferenceDate: 16_312),
+                left: HandPracticeStats(durationMilliseconds: 12_000),
+                leftPreset: leftPreset
+            )
+            _ = try event.commit(summary: summary, in: context)
+            try context.save()
+        }
+
+        let reopenedConfiguration = ModelConfiguration(
+            "GeoPractice",
+            schema: schema,
+            url: storeURL,
+            cloudKitDatabase: .none
+        )
+        let reopenedContainer = try ModelContainer(
+            for: schema,
+            configurations: [reopenedConfiguration]
+        )
+        let restored = try XCTUnwrap(
+            PracticeAttempt.find(
+                sessionID: sessionID,
+                in: reopenedContainer.mainContext
+            )
+        )
+        XCTAssertTrue(restored.completions.isEmpty)
+        XCTAssertEqual(restored.stats(for: .left).durationMilliseconds, 12_000)
+        XCTAssertEqual(restored.sessionPreset(for: .left), leftPreset.normalized)
+        XCTAssertEqual(restored.statisticsSnapshot.preset(for: .left), leftPreset.normalized)
     }
 
     @MainActor
@@ -3325,8 +4151,1564 @@ final class MetronomePresetTests: XCTestCase {
     }
 
     @MainActor
+    func testPracticeLibraryBootstrapPreservesLegacyIdentityHistoryAndFolderGroup() throws {
+        let container = try makeInMemoryPracticeContainer()
+        let context = container.mainContext
+        let eventID = UUID()
+        let sessionID = UUID()
+        let createdAt = Date(timeIntervalSinceReferenceDate: 40_000)
+        let event = PracticeEvent(
+            id: eventID,
+            name: "升级前练习",
+            leftCount: 12,
+            rightCount: 5,
+            bothCount: 3,
+            createdAt: createdAt,
+            updatedAt: createdAt
+        )
+        let legacyPlan = PracticeGoalPlan(
+            id: UUID(),
+            targets: PracticeGoalCounts(left: 10, right: 8, both: 4),
+            baseline: PracticeGoalCounts(left: 7, right: 2, both: 1),
+            enabledAt: createdAt.addingTimeInterval(-60)
+        )
+        event.setGoalPlan(legacyPlan, at: createdAt)
+        let folder = PracticeFolder(
+            name: "古典",
+            eventIDs: [eventID],
+            createdAt: createdAt,
+            updatedAt: createdAt
+        )
+        context.insert(event)
+        context.insert(folder)
+        let committed = try event.commit(
+            summary: PracticeSessionSummary(
+                sessionID: sessionID,
+                sourceEventID: eventID,
+                startedAt: createdAt,
+                finishedAt: createdAt.addingTimeInterval(30),
+                left: HandPracticeStats(count: 2, durationMilliseconds: 30_000)
+            ),
+            in: context
+        )
+        let aggregateBeforeMigration = PracticeGoalCounts(
+            left: event.leftCount,
+            right: event.rightCount,
+            both: event.bothCount
+        )
+        let progressBeforeMigration = PracticeGoalProgress(
+            targets: legacyPlan.targets,
+            completed: aggregateBeforeMigration.subtractingFloorAtZero(
+                legacyPlan.baseline
+            )
+        )
+
+        let store = try PracticeLibraryStore(modelContext: context)
+        let migrated = try XCTUnwrap(store.songs.first)
+        let migratedSongID = migrated.id
+
+        XCTAssertEqual(store.songs.count, 1)
+        XCTAssertEqual(migrated.name, "升级前练习")
+        XCTAssertEqual(migrated.group, "古典")
+        XCTAssertFalse(migrated.resetsDaily)
+        XCTAssertEqual(migrated.endDate, .distantFuture)
+        XCTAssertEqual(migrated.sections.map(\.id), [eventID])
+        XCTAssertEqual(migrated.sections.first?.goalProgress, progressBeforeMigration)
+        XCTAssertEqual(store.event(id: eventID)?.goalPlan, legacyPlan)
+        XCTAssertEqual(store.event(id: eventID)?.id, eventID)
+        XCTAssertEqual(store.event(id: eventID)?.songID, migratedSongID)
+        XCTAssertTrue(folder.contains(eventID: eventID))
+        XCTAssertEqual(
+            try PracticeAttempt.history(for: eventID, in: context).map(\.id),
+            [committed.attempt.id]
+        )
+
+        // A second bootstrap must observe the persisted link instead of
+        // manufacturing another song or replacing any stable identity.
+        let reloadedStore = try PracticeLibraryStore(modelContext: context)
+        XCTAssertEqual(reloadedStore.songs.map(\.id), [migratedSongID])
+        XCTAssertEqual(reloadedStore.songs.first?.sections.map(\.id), [eventID])
+        XCTAssertEqual(
+            try PracticeAttempt.history(for: eventID, in: context).map(\.sessionID),
+            [sessionID]
+        )
+        XCTAssertFalse(reloadedStore.songs.first?.resetsDaily ?? true)
+        XCTAssertEqual(
+            reloadedStore.songs.first?.sections.first?.goalProgress,
+            progressBeforeMigration
+        )
+    }
+
+    @MainActor
+    func testPracticeLibraryBootstrapNormalizesLegacyCompletionMultiplier() throws {
+        let container = try makeInMemoryPracticeContainer()
+        let context = container.mainContext
+        let legacySong = PracticeSong(name: "旧版倍率曲目")
+        legacySong.multiplier = 4
+        context.insert(legacySong)
+        try context.save()
+        XCTAssertEqual(legacySong.multiplier, 4)
+
+        let store = try PracticeLibraryStore(modelContext: context)
+
+        XCTAssertEqual(legacySong.multiplier, 1)
+        XCTAssertEqual(store.song(id: legacySong.id)?.name, "旧版倍率曲目")
+
+        _ = try store.saveSong(
+            id: legacySong.id,
+            name: "旧版倍率曲目",
+            group: "测试",
+            sections: [PracticeSectionDraft(name: "完整练习")],
+            leftGoal: 10,
+            rightGoal: 0,
+            bothGoal: 0,
+            multiplier: 4,
+            resetsDaily: false,
+            endDate: .distantFuture,
+            archived: false
+        )
+        XCTAssertEqual(legacySong.multiplier, 1)
+    }
+
+    @MainActor
+    func testPracticeLibraryRestoreNormalizesLegacyBackupCompletionMultiplier() throws {
+        let container = try makeInMemoryPracticeContainer()
+        let context = container.mainContext
+        let store = try PracticeLibraryStore(modelContext: context)
+        let songID = try store.saveSong(
+            id: nil,
+            name: "旧备份倍率曲目",
+            group: "测试",
+            sections: [PracticeSectionDraft(name: "完整练习")],
+            leftGoal: 10,
+            rightGoal: 0,
+            bothGoal: 0,
+            multiplier: 1,
+            resetsDaily: false,
+            endDate: .distantFuture,
+            archived: false
+        )
+        var root = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: store.makeBackupData())
+                as? [String: Any]
+        )
+        var songs = try XCTUnwrap(root["songs"] as? [[String: Any]])
+        XCTAssertEqual(songs.count, 1)
+        songs[0]["multiplier"] = 4
+        root["songs"] = songs
+        let legacyBackup = try JSONSerialization.data(withJSONObject: root)
+
+        try store.restoreBackup(from: legacyBackup)
+
+        XCTAssertEqual(store.songModel(id: songID)?.multiplier, 1)
+        let normalizedRoot = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: store.makeBackupData())
+                as? [String: Any]
+        )
+        let normalizedSongs = try XCTUnwrap(
+            normalizedRoot["songs"] as? [[String: Any]]
+        )
+        XCTAssertEqual(normalizedSongs.first?["multiplier"] as? Int, 1)
+    }
+
+    @MainActor
+    func testPracticeLibraryStableSectionRenamePreservesAttemptHistory() throws {
+        let container = try makeInMemoryPracticeContainer()
+        let context = container.mainContext
+        let store = try PracticeLibraryStore(modelContext: context)
+        let sectionID = UUID()
+        let songID = try store.saveSong(
+            id: nil,
+            name: "练习曲",
+            group: "钢琴",
+            sections: [PracticeSectionDraft(id: sectionID, name: "第一段")],
+            leftGoal: 10,
+            rightGoal: 0,
+            bothGoal: 0,
+            multiplier: 1,
+            resetsDaily: false,
+            endDate: .now.addingTimeInterval(30 * 86_400),
+            archived: false
+        )
+        let result = try store.commit(summary: PracticeSessionSummary(
+            sourceEventID: sectionID,
+            startedAt: .now.addingTimeInterval(-20),
+            finishedAt: .now,
+            left: HandPracticeStats(count: 1, durationMilliseconds: 20_000)
+        ))
+
+        _ = try store.saveSong(
+            id: songID,
+            name: "练习曲",
+            group: "钢琴",
+            sections: [PracticeSectionDraft(id: sectionID, name: "呈示部")],
+            leftGoal: 10,
+            rightGoal: 0,
+            bothGoal: 0,
+            multiplier: 1,
+            resetsDaily: false,
+            endDate: .now.addingTimeInterval(30 * 86_400),
+            archived: false
+        )
+
+        let renamed = try XCTUnwrap(store.song(id: songID)?.sections.first)
+        let history = try PracticeAttempt.history(for: sectionID, in: context)
+        XCTAssertEqual(renamed.id, sectionID)
+        XCTAssertEqual(renamed.name, "呈示部")
+        XCTAssertEqual(store.event(id: sectionID)?.name, "呈示部")
+        XCTAssertEqual(history.map(\.id), [result.attempt.id])
+        XCTAssertEqual(history.first?.eventNameSnapshot, "第一段")
+        XCTAssertEqual(store.event(id: sectionID)?.leftCount, 1)
+    }
+
+    @MainActor
+    func testPracticeLibraryRejectsBlankSectionWithoutDeletingItsHistory() throws {
+        let container = try makeInMemoryPracticeContainer()
+        let context = container.mainContext
+        let store = try PracticeLibraryStore(modelContext: context)
+        let sectionID = UUID()
+        let songID = try store.saveSong(
+            id: nil,
+            name: "保留历史",
+            group: "测试",
+            sections: [PracticeSectionDraft(id: sectionID, name: "主题")],
+            leftGoal: 10,
+            rightGoal: 0,
+            bothGoal: 0,
+            multiplier: 1,
+            resetsDaily: false,
+            endDate: .now.addingTimeInterval(30 * 86_400),
+            archived: false
+        )
+        let committed = try store.commit(summary: PracticeSessionSummary(
+            sourceEventID: sectionID,
+            startedAt: .now.addingTimeInterval(-10),
+            finishedAt: .now,
+            left: HandPracticeStats(count: 1, durationMilliseconds: 10_000)
+        ))
+
+        XCTAssertThrowsError(try store.saveSong(
+            id: songID,
+            name: "保留历史",
+            group: "测试",
+            sections: [PracticeSectionDraft(id: sectionID, name: "   \n")],
+            leftGoal: 10,
+            rightGoal: 0,
+            bothGoal: 0,
+            multiplier: 1,
+            resetsDaily: false,
+            endDate: .now.addingTimeInterval(30 * 86_400),
+            archived: false
+        )) { error in
+            XCTAssertEqual(
+                error as? PracticeLibraryStoreError,
+                .emptySectionName
+            )
+        }
+
+        XCTAssertEqual(store.song(id: songID)?.sections.map(\.id), [sectionID])
+        XCTAssertEqual(store.event(id: sectionID)?.name, "主题")
+        XCTAssertEqual(store.event(id: sectionID)?.leftCount, 1)
+        XCTAssertEqual(
+            try PracticeAttempt.history(for: sectionID, in: context).map(\.id),
+            [committed.attempt.id]
+        )
+    }
+
+    @MainActor
+    func testPracticeLibraryLaunchUsesSharedSectionPresetDespiteDifferentHandHistory() throws {
+        let container = try makeInMemoryPracticeContainer()
+        let context = container.mainContext
+        let store = try PracticeLibraryStore(modelContext: context)
+        let sectionID = UUID()
+        _ = try store.saveSong(
+            id: nil,
+            name: "分手继承",
+            group: "测试",
+            sections: [PracticeSectionDraft(id: sectionID, name: "主段落")],
+            leftGoal: 10,
+            rightGoal: 10,
+            bothGoal: 10,
+            multiplier: 1,
+            resetsDaily: false,
+            endDate: .now.addingTimeInterval(30 * 86_400),
+            archived: false
+        )
+        let sectionPreset = try XCTUnwrap(store.event(id: sectionID)?.preset)
+
+        var leftPreset = MetronomePreset.standard
+        leftPreset.bpm = 72
+        leftPreset.beats = 3
+        leftPreset.subdivision = 2
+        leftPreset.referenceNote = .eighth
+
+        var rightPreset = MetronomePreset.standard
+        rightPreset.bpm = 132
+        rightPreset.beats = 5
+        rightPreset.subdivision = 4
+        rightPreset.referenceNote = .quarter
+
+        var bothPreset = MetronomePreset.standard
+        bothPreset.bpm = 96
+        bothPreset.beats = 6
+        bothPreset.subdivision = 0
+        bothPreset.referenceNote = .half
+
+        let finishedAt = Date.now
+        _ = try store.commit(summary: PracticeSessionSummary(
+            sourceEventID: sectionID,
+            startedAt: finishedAt.addingTimeInterval(-12),
+            finishedAt: finishedAt,
+            left: HandPracticeStats(count: 1, durationMilliseconds: 4_000),
+            right: HandPracticeStats(count: 1, durationMilliseconds: 4_000),
+            both: HandPracticeStats(count: 1, durationMilliseconds: 4_000),
+            completions: [
+                PracticeCompletionSample(
+                    hand: .left,
+                    preset: leftPreset,
+                    completedAt: finishedAt.addingTimeInterval(-3)
+                ),
+                PracticeCompletionSample(
+                    hand: .right,
+                    preset: rightPreset,
+                    completedAt: finishedAt.addingTimeInterval(-2)
+                ),
+                PracticeCompletionSample(
+                    hand: .both,
+                    preset: bothPreset,
+                    completedAt: finishedAt.addingTimeInterval(-1)
+                )
+            ]
+        ))
+
+        let launch = try XCTUnwrap(store.launch(eventID: sectionID))
+        XCTAssertEqual(launch.preset, sectionPreset.normalized)
+        XCTAssertNotEqual(launch.preset, leftPreset.normalized)
+        XCTAssertNotEqual(launch.preset, rightPreset.normalized)
+        XCTAssertNotEqual(launch.preset, bothPreset.normalized)
+    }
+
+    @MainActor
+    func testPracticeLibraryArchiveAndRestorePreserveRecords() throws {
+        let container = try makeInMemoryPracticeContainer()
+        let context = container.mainContext
+        let store = try PracticeLibraryStore(modelContext: context)
+        let sectionID = UUID()
+        let futureEndDate = Date.now.addingTimeInterval(30 * 86_400)
+        let songID = try store.saveSong(
+            id: nil,
+            name: "哈农",
+            group: "基本功",
+            sections: [PracticeSectionDraft(id: sectionID, name: "完整练习")],
+            leftGoal: 10,
+            rightGoal: 10,
+            bothGoal: 0,
+            multiplier: 1,
+            resetsDaily: false,
+            endDate: futureEndDate,
+            archived: false
+        )
+        _ = try store.commit(summary: PracticeSessionSummary(
+            sourceEventID: sectionID,
+            startedAt: .now.addingTimeInterval(-15),
+            finishedAt: .now,
+            right: HandPracticeStats(count: 3, durationMilliseconds: 15_000)
+        ))
+        let recordsBefore = store.records(for: songID)
+
+        XCTAssertTrue(try store.setArchived(songID, true))
+        XCTAssertFalse(store.activeSongs.contains { $0.id == songID })
+        XCTAssertTrue(store.archivedSongs.contains { $0.id == songID })
+        XCTAssertEqual(store.records(for: songID), recordsBefore)
+
+        XCTAssertTrue(try store.setArchived(songID, false))
+        XCTAssertTrue(store.activeSongs.contains { $0.id == songID })
+        XCTAssertFalse(store.archivedSongs.contains { $0.id == songID })
+        XCTAssertEqual(store.song(id: songID)?.endDate, futureEndDate)
+        XCTAssertEqual(store.records(for: songID), recordsBefore)
+    }
+
+    @MainActor
+    func testPracticeLibraryDeleteCascadesGraphAndProtectsActiveSection() throws {
+        let container = try makeInMemoryPracticeContainer()
+        let context = container.mainContext
+        let store = try PracticeLibraryStore(modelContext: context)
+        let firstSectionID = UUID()
+        let secondSectionID = UUID()
+        let songID = try store.saveSong(
+            id: nil,
+            name: "月光",
+            group: "贝多芬",
+            sections: [
+                PracticeSectionDraft(id: firstSectionID, name: "第一段"),
+                PracticeSectionDraft(id: secondSectionID, name: "第二段")
+            ],
+            leftGoal: 5,
+            rightGoal: 5,
+            bothGoal: 5,
+            multiplier: 1,
+            resetsDaily: true,
+            endDate: .now.addingTimeInterval(30 * 86_400),
+            archived: false
+        )
+        let folder = PracticeFolder(
+            name: "奏鸣曲",
+            eventIDs: [firstSectionID, secondSectionID]
+        )
+        context.insert(folder)
+
+        for eventID in [firstSectionID, secondSectionID] {
+            let event = try XCTUnwrap(store.event(id: eventID))
+            let plan = try XCTUnwrap(event.goalPlan)
+            _ = try PracticeDailyGoal.create(
+                for: eventID,
+                planID: plan.id,
+                targets: plan.targets,
+                in: context
+            )
+            _ = try store.commit(summary: PracticeSessionSummary(
+                sourceEventID: eventID,
+                finishedAt: .now,
+                both: HandPracticeStats(count: 1)
+            ))
+        }
+
+        store.protectedEventID = firstSectionID
+        XCTAssertThrowsError(try store.deleteSong(songID)) { error in
+            XCTAssertEqual(
+                error as? PracticeLibraryStoreError,
+                .activeSessionProtected
+            )
+        }
+        XCTAssertNotNil(store.song(id: songID))
+        XCTAssertNotNil(store.event(id: firstSectionID))
+        XCTAssertEqual(try PracticeAttempt.history(for: firstSectionID, in: context).count, 1)
+        XCTAssertTrue(folder.contains(eventID: firstSectionID))
+
+        store.protectedEventID = nil
+        XCTAssertTrue(try store.deleteSong(songID))
+        XCTAssertNil(store.song(id: songID))
+        XCTAssertNil(store.event(id: firstSectionID))
+        XCTAssertNil(store.event(id: secondSectionID))
+        XCTAssertTrue(try PracticeAttempt.history(for: firstSectionID, in: context).isEmpty)
+        XCTAssertTrue(try PracticeAttempt.history(for: secondSectionID, in: context).isEmpty)
+        XCTAssertTrue(try PracticeDailyGoal.history(for: firstSectionID, in: context).isEmpty)
+        XCTAssertTrue(try PracticeDailyGoal.history(for: secondSectionID, in: context).isEmpty)
+        XCTAssertFalse(folder.contains(eventID: firstSectionID))
+        XCTAssertFalse(folder.contains(eventID: secondSectionID))
+        XCTAssertFalse(try store.deleteSong(songID))
+    }
+
+    @MainActor
+    func testPracticeLibraryBackupRoundTripKeepsGraphEquivalentAndProtectionIsNonMutating() throws {
+        let container = try makeInMemoryPracticeContainer()
+        let context = container.mainContext
+        let store = try PracticeLibraryStore(modelContext: context)
+        let sectionID = UUID()
+        let folderID = UUID()
+        let referenceDate = Date.now.addingTimeInterval(-3_600)
+        let songID = try store.saveSong(
+            id: nil,
+            name: "备份曲目",
+            group: "收藏",
+            sections: [PracticeSectionDraft(id: sectionID, name: "主题")],
+            leftGoal: 8,
+            rightGoal: 4,
+            bothGoal: 2,
+            multiplier: 3,
+            resetsDaily: true,
+            endDate: Date.now.addingTimeInterval(30 * 86_400),
+            archived: false
+        )
+        let event = try XCTUnwrap(store.event(id: sectionID))
+        let plan = try XCTUnwrap(event.goalPlan)
+        let folder = PracticeFolder(
+            id: folderID,
+            name: "奏鸣曲",
+            sortIndex: 2,
+            eventIDs: [sectionID],
+            createdAt: referenceDate,
+            updatedAt: referenceDate
+        )
+        context.insert(folder)
+        let dailyGoal = try PracticeDailyGoal.create(
+            for: sectionID,
+            planID: plan.id,
+            targets: plan.targets,
+            at: referenceDate,
+            timeZone: TimeZone(secondsFromGMT: 0)!,
+            in: context
+        )
+        _ = try store.commit(summary: PracticeSessionSummary(
+            sessionID: UUID(),
+            sourceEventID: sectionID,
+            startedAt: referenceDate,
+            finishedAt: referenceDate.addingTimeInterval(12),
+            left: HandPracticeStats(count: 2, durationMilliseconds: 12_000),
+            completions: [
+                PracticeCompletionSample(
+                    hand: .left,
+                    preset: event.preset,
+                    completedAt: referenceDate.addingTimeInterval(6)
+                )
+            ]
+        ))
+        try context.save()
+        try store.reload()
+
+        let backup = try store.makeBackupData()
+        let songsBefore = store.songs
+        let recordsBefore = store.records
+        let eventPlanBefore = store.event(id: sectionID)?.goalPlan
+        let attemptIDsBefore = try PracticeAttempt.history(
+            for: sectionID,
+            in: context
+        ).map(\.id)
+        let dailyGoalIDsBefore = try PracticeDailyGoal.history(
+            for: sectionID,
+            in: context
+        ).map(\.id)
+        let folderIDsBefore = try context.fetch(
+            FetchDescriptor<PracticeFolder>()
+        ).map(\.id)
+        XCTAssertEqual(songsBefore.map(\.id), [songID])
+        XCTAssertEqual(dailyGoalIDsBefore, [dailyGoal.id])
+
+        store.protectedEventID = sectionID
+        XCTAssertThrowsError(try store.restoreBackup(from: backup)) { error in
+            XCTAssertEqual(
+                error as? PracticeLibraryStoreError,
+                .activeSessionProtected
+            )
+        }
+        XCTAssertEqual(store.songs, songsBefore)
+        XCTAssertEqual(store.records, recordsBefore)
+        XCTAssertEqual(store.event(id: sectionID)?.goalPlan, eventPlanBefore)
+        XCTAssertEqual(
+            try PracticeAttempt.history(for: sectionID, in: context).map(\.id),
+            attemptIDsBefore
+        )
+        XCTAssertEqual(
+            try PracticeDailyGoal.history(for: sectionID, in: context).map(\.id),
+            dailyGoalIDsBefore
+        )
+        XCTAssertEqual(
+            try context.fetch(FetchDescriptor<PracticeFolder>()).map(\.id),
+            folderIDsBefore
+        )
+
+        store.protectedEventID = nil
+        XCTAssertThrowsError(
+            try store.restoreBackup(from: Data("not-json".utf8))
+        ) { error in
+            XCTAssertEqual(
+                error as? PracticeLibraryStoreError,
+                .invalidBackup
+            )
+        }
+        XCTAssertEqual(store.songs, songsBefore)
+        XCTAssertEqual(store.records, recordsBefore)
+        XCTAssertEqual(store.event(id: sectionID)?.goalPlan, eventPlanBefore)
+        XCTAssertEqual(
+            try PracticeAttempt.history(for: sectionID, in: context).map(\.id),
+            attemptIDsBefore
+        )
+        XCTAssertEqual(
+            try PracticeDailyGoal.history(for: sectionID, in: context).map(\.id),
+            dailyGoalIDsBefore
+        )
+        XCTAssertEqual(
+            try context.fetch(FetchDescriptor<PracticeFolder>()).map(\.id),
+            folderIDsBefore
+        )
+
+        // Importing the same document forces the same context to reconcile
+        // every identity in place, including unique UUID/session/key values,
+        // and persist the complete graph in one atomic save.
+        try store.restoreBackup(from: backup)
+        XCTAssertEqual(store.songs, songsBefore)
+        XCTAssertEqual(store.records, recordsBefore)
+        XCTAssertEqual(store.event(id: sectionID)?.goalPlan, eventPlanBefore)
+        XCTAssertEqual(
+            try PracticeAttempt.history(for: sectionID, in: context).map(\.id),
+            attemptIDsBefore
+        )
+        XCTAssertEqual(
+            try PracticeDailyGoal.history(for: sectionID, in: context).map(\.id),
+            dailyGoalIDsBefore
+        )
+        let restoredFolders = try context.fetch(FetchDescriptor<PracticeFolder>())
+        XCTAssertEqual(restoredFolders.map(\.id), [folderID])
+        XCTAssertEqual(restoredFolders.first?.eventIDs, [sectionID])
+        XCTAssertFalse(try store.makeBackupData().isEmpty)
+    }
+
+    @MainActor
+    func testPracticeLibraryBackupRoundTripKeepsDurationOnlySessionPresets() throws {
+        let container = try makeInMemoryPracticeContainer()
+        let context = container.mainContext
+        let store = try PracticeLibraryStore(modelContext: context)
+        let sectionID = UUID()
+        _ = try store.saveSong(
+            id: nil,
+            name: "只计时备份",
+            group: "测试",
+            sections: [PracticeSectionDraft(id: sectionID, name: "慢练")],
+            leftGoal: 0,
+            rightGoal: 0,
+            bothGoal: 0,
+            multiplier: 1,
+            resetsDaily: false,
+            endDate: .distantFuture,
+            archived: false
+        )
+
+        var leftPreset = MetronomePreset.standard
+        leftPreset.bpm = 74
+        var rightPreset = MetronomePreset.standard
+        rightPreset.bpm = 126
+        rightPreset.beats = 5
+        rightPreset.grouping = "2+3"
+        var bothPreset = MetronomePreset.standard
+        bothPreset.bpm = 98
+        bothPreset.subdivision = 4
+        let summary = PracticeSessionSummary(
+            sessionID: UUID(),
+            sourceEventID: sectionID,
+            startedAt: Date(timeIntervalSinceReferenceDate: 91_500),
+            finishedAt: Date(timeIntervalSinceReferenceDate: 91_530),
+            left: HandPracticeStats(durationMilliseconds: 10_000),
+            right: HandPracticeStats(durationMilliseconds: 8_000),
+            both: HandPracticeStats(durationMilliseconds: 12_000),
+            leftPreset: leftPreset,
+            rightPreset: rightPreset,
+            bothPreset: bothPreset
+        )
+        let attempt = try store.commit(summary: summary).attempt
+        let backup = try store.makeBackupData()
+
+        attempt.replacePersistedStateForRestore(
+            id: attempt.id,
+            sessionID: attempt.sessionID,
+            eventID: attempt.eventID,
+            eventNameSnapshot: attempt.eventNameSnapshot,
+            startedAt: attempt.startedAt,
+            finishedAt: attempt.finishedAt,
+            createdAt: attempt.createdAt,
+            dailyGoalKey: attempt.dailyGoalKey,
+            left: attempt.stats(for: .left),
+            right: attempt.stats(for: .right),
+            both: attempt.stats(for: .both),
+            completions: [],
+            leftSpeed: PracticeHandSpeedSummary(),
+            rightSpeed: PracticeHandSpeedSummary(),
+            bothSpeed: PracticeHandSpeedSummary(),
+            goalLaunchContext: attempt.goalLaunchContext,
+            goalReport: attempt.goalReport
+        )
+        try context.save()
+        XCTAssertNil(attempt.sessionPreset(for: .left))
+
+        try store.restoreBackup(from: backup)
+        let restored = try XCTUnwrap(
+            PracticeAttempt.find(sessionID: summary.sessionID, in: context)
+        )
+        XCTAssertTrue(restored.completions.isEmpty)
+        XCTAssertEqual(restored.sessionPreset(for: .left), leftPreset.normalized)
+        XCTAssertEqual(restored.sessionPreset(for: .right), rightPreset.normalized)
+        XCTAssertEqual(restored.sessionPreset(for: .both), bothPreset.normalized)
+        XCTAssertEqual(restored.statisticsSnapshot.preset(for: .left), leftPreset.normalized)
+        XCTAssertEqual(restored.statisticsSnapshot.preset(for: .right), rightPreset.normalized)
+        XCTAssertEqual(restored.statisticsSnapshot.preset(for: .both), bothPreset.normalized)
+    }
+
+    @MainActor
+    func testPracticeLibraryBackupRestoreReplacesExistingAttemptPayloads() throws {
+        let container = try makeInMemoryPracticeContainer()
+        let context = container.mainContext
+        let store = try PracticeLibraryStore(modelContext: context)
+        let sectionID = UUID()
+        _ = try store.saveSong(
+            id: nil,
+            name: "完整 Attempt 备份",
+            group: "测试",
+            sections: [PracticeSectionDraft(id: sectionID, name: "主段落")],
+            leftGoal: 8,
+            rightGoal: 7,
+            bothGoal: 6,
+            multiplier: 1,
+            resetsDaily: true,
+            endDate: .now.addingTimeInterval(30 * 86_400),
+            archived: false
+        )
+        let event = try XCTUnwrap(store.event(id: sectionID))
+        let plan = try XCTUnwrap(event.goalPlan)
+        let startedAt = Date(timeIntervalSinceReferenceDate: 91_000)
+        let finishedAt = startedAt.addingTimeInterval(45)
+        let timeZone = TimeZone(secondsFromGMT: 8 * 3_600)!
+        let localDay = PracticeDailyGoal.localDay(
+            containing: startedAt,
+            timeZone: timeZone
+        )
+        let dailyGoalKey = PracticeDailyGoal.makeKey(
+            eventID: sectionID,
+            planID: plan.id,
+            localDay: localDay
+        )
+        let launchContext = PracticeGoalLaunchContext(
+            eventID: sectionID,
+            launchedAt: startedAt,
+            localDay: localDay,
+            timeZoneIdentifier: timeZone.identifier,
+            timeZoneSecondsFromGMT: timeZone.secondsFromGMT(for: startedAt),
+            dailyGoalKey: dailyGoalKey,
+            dailyTargets: PracticeGoalCounts(left: 8, right: 7, both: 6),
+            dailyCompletedBeforeSession: PracticeGoalCounts(left: 2, right: 1, both: 0),
+            plan: plan,
+            planCompletedBeforeSession: PracticeGoalCounts(left: 3, right: 2, both: 1)
+        )
+
+        func preset(bpm: Int, beats: Int, subdivision: Int) -> MetronomePreset {
+            var value = MetronomePreset.standard
+            value.bpm = bpm
+            value.beats = beats
+            value.subdivision = subdivision
+            return value.normalized
+        }
+
+        let completions = [
+            PracticeCompletionSample(
+                hand: .left,
+                preset: preset(bpm: 96, beats: 4, subdivision: 2),
+                completedAt: startedAt.addingTimeInterval(4)
+            ),
+            PracticeCompletionSample(
+                hand: .left,
+                preset: preset(bpm: 144, beats: 5, subdivision: 4),
+                completedAt: startedAt.addingTimeInterval(8)
+            ),
+            PracticeCompletionSample(
+                hand: .left,
+                preset: preset(bpm: 96, beats: 4, subdivision: 2),
+                completedAt: startedAt.addingTimeInterval(12)
+            ),
+            PracticeCompletionSample(
+                hand: .right,
+                preset: preset(bpm: 84, beats: 3, subdivision: 1),
+                completedAt: startedAt.addingTimeInterval(16)
+            ),
+            PracticeCompletionSample(
+                hand: .right,
+                preset: preset(bpm: 132, beats: 7, subdivision: 4),
+                completedAt: startedAt.addingTimeInterval(20)
+            ),
+            PracticeCompletionSample(
+                hand: .right,
+                preset: preset(bpm: 84, beats: 3, subdivision: 1),
+                completedAt: startedAt.addingTimeInterval(24)
+            ),
+            PracticeCompletionSample(
+                hand: .both,
+                preset: preset(bpm: 72, beats: 6, subdivision: 2),
+                completedAt: startedAt.addingTimeInterval(28)
+            ),
+            PracticeCompletionSample(
+                hand: .both,
+                preset: preset(bpm: 108, beats: 9, subdivision: 4),
+                completedAt: startedAt.addingTimeInterval(32)
+            ),
+            PracticeCompletionSample(
+                hand: .both,
+                preset: preset(bpm: 72, beats: 6, subdivision: 2),
+                completedAt: startedAt.addingTimeInterval(36)
+            )
+        ]
+        let sessionCompleted = PracticeGoalCounts(left: 3, right: 3, both: 3)
+        let goalReport = PracticeGoalReportSnapshot(
+            launchContext: launchContext,
+            sessionCompleted: sessionCompleted,
+            generatedAt: finishedAt
+        )
+        let summary = PracticeSessionSummary(
+            sessionID: UUID(),
+            sourceEventID: sectionID,
+            startedAt: startedAt,
+            finishedAt: finishedAt,
+            left: HandPracticeStats(count: 3, durationMilliseconds: 11_000),
+            right: HandPracticeStats(count: 3, durationMilliseconds: 13_000),
+            both: HandPracticeStats(count: 3, durationMilliseconds: 17_000),
+            completions: completions,
+            goalLaunchContext: launchContext,
+            goalReport: goalReport
+        )
+        let attempt = try store.commit(summary: summary).attempt
+        let expectedCreatedAt = attempt.createdAt
+        let expectedLeftSpeed = attempt.speedSummary(for: .left)
+        let expectedRightSpeed = attempt.speedSummary(for: .right)
+        let expectedBothSpeed = attempt.speedSummary(for: .both)
+        let backup = try store.makeBackupData()
+
+        func backupWithSpeedCompletionCount(_ count: Int) throws -> Data {
+            var root = try XCTUnwrap(
+                try JSONSerialization.jsonObject(with: backup) as? [String: Any]
+            )
+            var attempts = try XCTUnwrap(root["attempts"] as? [[String: Any]])
+            var attemptPayload = try XCTUnwrap(attempts.first)
+            var leftSpeed = try XCTUnwrap(
+                attemptPayload["leftSpeed"] as? [String: Any]
+            )
+            var mostPracticed = try XCTUnwrap(
+                leftSpeed["mostPracticed"] as? [String: Any]
+            )
+            mostPracticed["completionCount"] = count
+            leftSpeed["mostPracticed"] = mostPracticed
+            attemptPayload["leftSpeed"] = leftSpeed
+            attempts[0] = attemptPayload
+            root["attempts"] = attempts
+            return try JSONSerialization.data(withJSONObject: root)
+        }
+
+        for invalidCount in [-1, 1_000_001] {
+            let invalidBackup = try backupWithSpeedCompletionCount(invalidCount)
+            XCTAssertThrowsError(try store.restoreBackup(from: invalidBackup)) { error in
+                XCTAssertEqual(
+                    error as? PracticeLibraryStoreError,
+                    .invalidBackup
+                )
+            }
+        }
+        XCTAssertEqual(attempt.completions, completions)
+        XCTAssertEqual(attempt.speedSummary(for: .left), expectedLeftSpeed)
+        XCTAssertEqual(attempt.goalLaunchContext, launchContext)
+        XCTAssertEqual(attempt.goalReport, goalReport)
+
+        let changedCompletion = PracticeCompletionSample(
+            hand: .left,
+            preset: preset(bpm: 200, beats: 2, subdivision: 0),
+            completedAt: finishedAt.addingTimeInterval(10)
+        )
+        let changedLeftSpeed = PracticeHandSpeedSummary(
+            samples: [changedCompletion],
+            for: .left
+        )
+        attempt.replacePersistedStateForRestore(
+            id: attempt.id,
+            sessionID: attempt.sessionID,
+            eventID: UUID(),
+            eventNameSnapshot: "已篡改",
+            startedAt: finishedAt.addingTimeInterval(20),
+            finishedAt: finishedAt.addingTimeInterval(30),
+            createdAt: finishedAt.addingTimeInterval(40),
+            dailyGoalKey: "changed-key",
+            left: HandPracticeStats(count: 1, durationMilliseconds: 1_000),
+            right: HandPracticeStats(count: 0, durationMilliseconds: 2_000),
+            both: HandPracticeStats(count: 0, durationMilliseconds: 3_000),
+            completions: [changedCompletion],
+            leftSpeed: changedLeftSpeed,
+            rightSpeed: PracticeHandSpeedSummary(),
+            bothSpeed: PracticeHandSpeedSummary(),
+            goalLaunchContext: nil,
+            goalReport: nil
+        )
+        try context.save()
+        XCTAssertNotEqual(attempt.completions, completions)
+        XCTAssertNotEqual(attempt.speedSummary(for: .left), expectedLeftSpeed)
+        XCTAssertNil(attempt.goalLaunchContext)
+        XCTAssertNil(attempt.goalReport)
+
+        try store.restoreBackup(from: backup)
+        let restored = try XCTUnwrap(
+            PracticeAttempt.find(sessionID: summary.sessionID, in: context)
+        )
+        XCTAssertTrue(restored === attempt, "Matching attempts must be reconciled in place")
+        XCTAssertEqual(restored.id, attempt.id)
+        XCTAssertEqual(restored.sessionID, summary.sessionID)
+        XCTAssertEqual(restored.eventID, sectionID)
+        XCTAssertEqual(restored.eventNameSnapshot, "主段落")
+        XCTAssertEqual(restored.startedAt, startedAt)
+        XCTAssertEqual(restored.finishedAt, finishedAt)
+        XCTAssertEqual(restored.createdAt, expectedCreatedAt)
+        XCTAssertEqual(restored.dailyGoalKey, dailyGoalKey)
+        XCTAssertEqual(restored.stats(for: .left), summary.left)
+        XCTAssertEqual(restored.stats(for: .right), summary.right)
+        XCTAssertEqual(restored.stats(for: .both), summary.both)
+        XCTAssertEqual(restored.completions, completions)
+        XCTAssertEqual(restored.speedSummary(for: .left), expectedLeftSpeed)
+        XCTAssertEqual(restored.speedSummary(for: .right), expectedRightSpeed)
+        XCTAssertEqual(restored.speedSummary(for: .both), expectedBothSpeed)
+        XCTAssertEqual(restored.leftMostPracticedBPM, expectedLeftSpeed.mostPracticed?.bpm)
+        XCTAssertEqual(restored.rightMostPracticedBPM, expectedRightSpeed.mostPracticed?.bpm)
+        XCTAssertEqual(restored.bothMostPracticedBPM, expectedBothSpeed.mostPracticed?.bpm)
+        XCTAssertEqual(restored.leftMaximumAttemptBPM, expectedLeftSpeed.maximumAttempt?.bpm)
+        XCTAssertEqual(restored.rightMaximumAttemptBPM, expectedRightSpeed.maximumAttempt?.bpm)
+        XCTAssertEqual(restored.bothMaximumAttemptBPM, expectedBothSpeed.maximumAttempt?.bpm)
+        XCTAssertEqual(restored.goalLaunchContext, launchContext)
+        XCTAssertEqual(restored.goalReport, goalReport)
+    }
+
+    func testPrototypeSongDeletionWarningCopyIsExact() {
+        XCTAssertEqual(
+            PrototypeSongDeletionCopy.message,
+            "请确认删除后本曲目和相关的统计数据都将清零"
+        )
+    }
+
+    @MainActor
+    func testPracticeLibraryTodayFilterUsesAttemptFinishDate() throws {
+        let container = try makeInMemoryPracticeContainer()
+        let context = container.mainContext
+        let store = try PracticeLibraryStore(modelContext: context)
+        let yesterdaySectionID = UUID()
+        let todaySectionID = UUID()
+        _ = try store.saveSong(
+            id: nil,
+            name: "日期筛选",
+            group: "测试",
+            sections: [
+                PracticeSectionDraft(id: yesterdaySectionID, name: "昨天"),
+                PracticeSectionDraft(id: todaySectionID, name: "今天")
+            ],
+            leftGoal: 0,
+            rightGoal: 0,
+            bothGoal: 0,
+            multiplier: 1,
+            resetsDaily: false,
+            endDate: .now.addingTimeInterval(30 * 86_400),
+            archived: false
+        )
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let now = Date(timeIntervalSinceReferenceDate: 800_000_000)
+        let yesterday = try XCTUnwrap(calendar.date(byAdding: .day, value: -1, to: now))
+        _ = try store.commit(summary: PracticeSessionSummary(
+            sourceEventID: yesterdaySectionID,
+            finishedAt: yesterday,
+            left: HandPracticeStats(count: 1)
+        ))
+        _ = try store.commit(summary: PracticeSessionSummary(
+            sourceEventID: todaySectionID,
+            finishedAt: now,
+            left: HandPracticeStats(count: 1)
+        ))
+
+        XCTAssertFalse(store.hasAttemptToday(
+            eventID: yesterdaySectionID,
+            now: now,
+            calendar: calendar
+        ))
+        XCTAssertTrue(store.hasAttemptToday(
+            eventID: todaySectionID,
+            now: now,
+            calendar: calendar
+        ))
+    }
+
+    @MainActor
+    func testPeriodCompletionAveragesEligibleActiveSongsEqually() throws {
+        let container = try makeInMemoryPracticeContainer()
+        let context = container.mainContext
+        let store = try PracticeLibraryStore(modelContext: context)
+        let completedSectionID = UUID()
+        let partialSectionID = UUID()
+        let noGoalSectionID = UUID()
+        let archivedSectionID = UUID()
+        let completedSongID = try store.saveSong(
+            id: nil,
+            name: "已完成曲目",
+            group: "测试",
+            sections: [PracticeSectionDraft(id: completedSectionID, name: "完整练习")],
+            leftGoal: 2,
+            rightGoal: 0,
+            bothGoal: 0,
+            multiplier: 1,
+            resetsDaily: false,
+            endDate: .now.addingTimeInterval(30 * 86_400),
+            archived: false
+        )
+        let partialSongID = try store.saveSong(
+            id: nil,
+            name: "部分完成曲目",
+            group: "测试",
+            sections: [PracticeSectionDraft(id: partialSectionID, name: "完整练习")],
+            leftGoal: 4,
+            rightGoal: 0,
+            bothGoal: 0,
+            multiplier: 1,
+            resetsDaily: false,
+            endDate: .now.addingTimeInterval(30 * 86_400),
+            archived: false
+        )
+        let noGoalSongID = try store.saveSong(
+            id: nil,
+            name: "无目标曲目",
+            group: "测试",
+            sections: [PracticeSectionDraft(id: noGoalSectionID, name: "完整练习")],
+            leftGoal: 0,
+            rightGoal: 0,
+            bothGoal: 0,
+            multiplier: 1,
+            resetsDaily: false,
+            endDate: .now.addingTimeInterval(30 * 86_400),
+            archived: false
+        )
+        let archivedSongID = try store.saveSong(
+            id: nil,
+            name: "已归档曲目",
+            group: "测试",
+            sections: [PracticeSectionDraft(id: archivedSectionID, name: "完整练习")],
+            leftGoal: 1,
+            rightGoal: 0,
+            bothGoal: 0,
+            multiplier: 1,
+            resetsDaily: false,
+            endDate: .now.addingTimeInterval(30 * 86_400),
+            archived: true
+        )
+
+        let completedAt = Date.now.addingTimeInterval(1)
+        _ = try store.commit(summary: PracticeSessionSummary(
+            sourceEventID: completedSectionID,
+            finishedAt: completedAt,
+            left: HandPracticeStats(count: 20)
+        ))
+        _ = try store.commit(summary: PracticeSessionSummary(
+            sourceEventID: partialSectionID,
+            finishedAt: completedAt,
+            left: HandPracticeStats(count: 1)
+        ))
+        let interval = DateInterval(
+            start: completedAt.addingTimeInterval(-10),
+            end: completedAt.addingTimeInterval(10)
+        )
+
+        // Per-song values are 100% and 25%; their arithmetic mean is 63%.
+        XCTAssertEqual(
+            store.completionPercentage(songID: nil, within: interval),
+            63
+        )
+        XCTAssertEqual(
+            store.completionPercentage(songID: completedSongID, within: interval),
+            100
+        )
+        XCTAssertEqual(
+            store.completionPercentage(songID: partialSongID, within: interval),
+            25
+        )
+        XCTAssertNil(store.completionPercentage(
+            songID: noGoalSongID,
+            within: interval
+        ))
+        XCTAssertNil(store.completionPercentage(
+            songID: archivedSongID,
+            within: interval
+        ))
+        XCTAssertEqual(
+            store.completionPercentage(songID: nil),
+            50,
+            "Archived songs must also stay out of the legacy aggregate denominator"
+        )
+    }
+
+    @MainActor
+    func testPeriodCompletionUsesOnlyRecordsInIntervalAndAfterGoalEnabled() throws {
+        let container = try makeInMemoryPracticeContainer()
+        let context = container.mainContext
+        let store = try PracticeLibraryStore(modelContext: context)
+        let sectionID = UUID()
+        let songID = try store.saveSong(
+            id: nil,
+            name: "周期完成度",
+            group: "测试",
+            sections: [PracticeSectionDraft(id: sectionID, name: "完整练习")],
+            leftGoal: 4,
+            rightGoal: 0,
+            bothGoal: 0,
+            multiplier: 1,
+            resetsDaily: false,
+            endDate: .now.addingTimeInterval(30 * 86_400),
+            archived: false
+        )
+        let enabledAt = try XCTUnwrap(store.event(id: sectionID)?.goalPlan?.enabledAt)
+        let beforeGoal = enabledAt.addingTimeInterval(-10)
+        let inPeriod = enabledAt.addingTimeInterval(10)
+        let outsidePeriod = enabledAt.addingTimeInterval(30)
+
+        _ = try store.addRecord(
+            songID: songID,
+            sectionID: sectionID,
+            date: beforeGoal,
+            hand: .left,
+            bpm: 120,
+            note: "四分音符",
+            duration: 10,
+            count: 20
+        )
+        _ = try store.commit(summary: PracticeSessionSummary(
+            sourceEventID: sectionID,
+            finishedAt: inPeriod,
+            left: HandPracticeStats(count: 2)
+        ))
+        _ = try store.commit(summary: PracticeSessionSummary(
+            sourceEventID: sectionID,
+            finishedAt: outsidePeriod,
+            left: HandPracticeStats(count: 20)
+        ))
+
+        let interval = DateInterval(
+            start: enabledAt.addingTimeInterval(-20),
+            end: enabledAt.addingTimeInterval(20)
+        )
+        XCTAssertEqual(
+            store.completionPercentage(songID: songID, within: interval),
+            50
+        )
+    }
+
+    func testPrototypeStatisticsPeriodIncludesDailyFilterAndCompletionLabel() {
+        XCTAssertEqual(
+            PrototypeStatisticsPeriod.allCases.map(\.title),
+            ["日", "周", "月", "年", "所有"]
+        )
+        XCTAssertEqual(
+            PrototypeStatisticsPeriod.day.completionTitle,
+            "今日总完成度"
+        )
+        XCTAssertEqual(
+            PrototypeStatisticsPeriod.week.completionTitle,
+            "周总完成度"
+        )
+        XCTAssertEqual(
+            PrototypeStatisticsPeriod.month.completionTitle,
+            "月总完成度"
+        )
+        XCTAssertEqual(
+            PrototypeStatisticsPeriod.year.completionTitle,
+            "曲目总完成度"
+        )
+        XCTAssertEqual(
+            PrototypeStatisticsPeriod.allCases.map(\.durationTitle),
+            [
+                "今日练习时长",
+                "本周练习时长",
+                "本月练习时长",
+                "本年练习时长",
+                "练习总时长"
+            ]
+        )
+    }
+
+    func testPrototypeStatisticsHandFilterOrderAndTotalsDoNotCrossHands() {
+        XCTAssertEqual(
+            PrototypeStatisticsHandFilter.allCases.map(\.title),
+            ["所有", "左", "合", "右"]
+        )
+
+        let contributions = [
+            PrototypeStatisticsHandContribution(
+                hand: .left,
+                count: 2,
+                duration: 10
+            ),
+            PrototypeStatisticsHandContribution(
+                hand: .together,
+                count: 7,
+                duration: 20
+            ),
+            PrototypeStatisticsHandContribution(
+                hand: .right,
+                count: 11,
+                duration: 30
+            )
+        ]
+
+        XCTAssertEqual(
+            PrototypeStatisticsHandFilter.all.totals(in: contributions),
+            PrototypeStatisticsHandTotals(count: 20, duration: 60)
+        )
+        XCTAssertEqual(
+            PrototypeStatisticsHandFilter.left.totals(in: contributions),
+            PrototypeStatisticsHandTotals(count: 2, duration: 10)
+        )
+        XCTAssertEqual(
+            PrototypeStatisticsHandFilter.together.totals(in: contributions),
+            PrototypeStatisticsHandTotals(count: 7, duration: 20)
+        )
+        XCTAssertEqual(
+            PrototypeStatisticsHandFilter.right.totals(in: contributions),
+            PrototypeStatisticsHandTotals(count: 11, duration: 30)
+        )
+    }
+
+    func testPrototypeSongDurationDistributionMergesAndKeepsEveryTimedSong() {
+        let firstID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+        let secondID = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
+        let durationOnlyID = UUID(uuidString: "00000000-0000-0000-0000-000000000003")!
+        let zeroDurationID = UUID(uuidString: "00000000-0000-0000-0000-000000000004")!
+        let contributions = [
+            PrototypeStatisticsSongDurationContribution(
+                songID: firstID,
+                songName: "第一首",
+                hand: .left,
+                count: 1,
+                duration: 10,
+                order: 0
+            ),
+            PrototypeStatisticsSongDurationContribution(
+                songID: firstID,
+                songName: "第一首",
+                hand: .right,
+                count: 0,
+                duration: 20,
+                order: 0
+            ),
+            PrototypeStatisticsSongDurationContribution(
+                songID: secondID,
+                songName: "低频曲目",
+                hand: .together,
+                count: 1,
+                duration: 30,
+                order: 1
+            ),
+            PrototypeStatisticsSongDurationContribution(
+                songID: durationOnlyID,
+                songName: "仅有时长",
+                hand: .left,
+                count: 0,
+                duration: 5,
+                order: 2
+            ),
+            PrototypeStatisticsSongDurationContribution(
+                songID: zeroDurationID,
+                songName: "零时长",
+                hand: .left,
+                count: 99,
+                duration: 0,
+                order: 3
+            )
+        ]
+
+        let all = PrototypeStatisticsSongDurationDistribution.resolve(
+            contributions: contributions,
+            handFilter: .all
+        )
+        XCTAssertEqual(all.map(\.songID), [firstID, secondID, durationOnlyID])
+        XCTAssertEqual(all.map(\.duration), [30, 30, 5])
+
+        let left = PrototypeStatisticsSongDurationDistribution.resolve(
+            contributions: contributions,
+            handFilter: .left
+        )
+        XCTAssertEqual(left.map(\.songID), [firstID, durationOnlyID])
+        XCTAssertEqual(left.map(\.duration), [10, 5])
+    }
+
+    func testPrototypeAllTimeMetricsAndDistributionUsePerHandSectionSnapshots() {
+        let songID = UUID()
+        let section = PracticeSectionSnapshot(
+            id: UUID(),
+            songID: songID,
+            name: "完整练习",
+            sortIndex: 0,
+            preset: .standard,
+            counts: PracticeGoalCounts(left: 2, right: 3, both: 5),
+            durationMilliseconds: 6_600,
+            durationByHand: PracticeHandDurationSnapshot(
+                left: 1_100,
+                right: 2_200,
+                both: 3_300
+            ),
+            lastPracticed: .now,
+            goalProgress: nil,
+            goalEnabledAt: nil
+        )
+        let song = PracticeSongSnapshot(
+            id: songID,
+            name: "权威快照",
+            group: "测试",
+            sections: [section],
+            resetsDaily: false,
+            endDate: .now,
+            sortIndex: 0,
+            createdAt: .now,
+            updatedAt: .now,
+            isArchived: false
+        )
+
+        XCTAssertEqual(
+            PrototypeStatisticsAllTimeMetrics.resolve(
+                songs: [song],
+                handFilter: .right
+            ),
+            PrototypeStatisticsAllTimeMetrics(
+                count: 3,
+                durationMilliseconds: 2_200
+            )
+        )
+        XCTAssertEqual(
+            PrototypeStatisticsAllTimeMetrics.resolve(
+                songs: [song],
+                handFilter: .all
+            ),
+            PrototypeStatisticsAllTimeMetrics(
+                count: 10,
+                durationMilliseconds: 6_600
+            )
+        )
+
+        let rightDistribution = PrototypeStatisticsSongDurationDistribution.resolveAllTime(
+            songs: [song],
+            handFilter: .right
+        )
+        XCTAssertEqual(rightDistribution.map(\.songID), [songID])
+        XCTAssertEqual(rightDistribution.map(\.duration), [2.2])
+    }
+
+    @MainActor
+    func testPracticeLibraryCompletionCapsEverySectionIndependentlyAtOneHundredPercent() throws {
+        let container = try makeInMemoryPracticeContainer()
+        let context = container.mainContext
+        let store = try PracticeLibraryStore(modelContext: context)
+        let firstSectionID = UUID()
+        let secondSectionID = UUID()
+        let songID = try store.saveSong(
+            id: nil,
+            name: "完成度",
+            group: "测试",
+            sections: [
+                PracticeSectionDraft(id: firstSectionID, name: "第一段"),
+                PracticeSectionDraft(id: secondSectionID, name: "第二段")
+            ],
+            leftGoal: 10,
+            rightGoal: 0,
+            bothGoal: 0,
+            multiplier: 1,
+            resetsDaily: false,
+            endDate: .now.addingTimeInterval(30 * 86_400),
+            archived: false
+        )
+
+        _ = try store.commit(summary: PracticeSessionSummary(
+            sourceEventID: firstSectionID,
+            finishedAt: .now,
+            left: HandPracticeStats(count: 20)
+        ))
+        XCTAssertEqual(store.completionPercentage(songID: songID), 50)
+
+        _ = try store.commit(summary: PracticeSessionSummary(
+            sourceEventID: secondSectionID,
+            finishedAt: .now,
+            left: HandPracticeStats(count: 20)
+        ))
+        XCTAssertEqual(store.completionPercentage(songID: songID), 100)
+
+        _ = try store.commit(summary: PracticeSessionSummary(
+            sourceEventID: firstSectionID,
+            finishedAt: .now,
+            left: HandPracticeStats(count: 100)
+        ))
+        XCTAssertEqual(store.completionPercentage(songID: songID), 100)
+        XCTAssertEqual(store.completionPercentage(songID: nil), 100)
+    }
+
+    @MainActor
+    func testPracticeLibraryBackfillCommitsHistoryWithoutAdvancingNewerPlan() throws {
+        let container = try makeInMemoryPracticeContainer()
+        let context = container.mainContext
+        let store = try PracticeLibraryStore(modelContext: context)
+        let sectionID = UUID()
+        let songID = try store.saveSong(
+            id: nil,
+            name: "补录测试",
+            group: "测试",
+            sections: [PracticeSectionDraft(id: sectionID, name: "完整练习")],
+            leftGoal: 10,
+            rightGoal: 0,
+            bothGoal: 0,
+            multiplier: 1,
+            resetsDaily: false,
+            endDate: .now.addingTimeInterval(30 * 86_400),
+            archived: false
+        )
+        let originalPlan = try XCTUnwrap(store.event(id: sectionID)?.goalPlan)
+        let backfillDate = originalPlan.enabledAt.addingTimeInterval(-7 * 86_400)
+
+        let result = try store.addRecord(
+            songID: songID,
+            sectionID: sectionID,
+            date: backfillDate,
+            hand: .left,
+            bpm: 144,
+            note: "十六分音符",
+            duration: 90,
+            count: 3
+        )
+
+        let event = try XCTUnwrap(store.event(id: sectionID))
+        let plan = try XCTUnwrap(event.goalPlan)
+        let attempt = try XCTUnwrap(
+            PracticeAttempt.history(for: sectionID, in: context).first
+        )
+        let section = try XCTUnwrap(store.eventSnapshot(id: sectionID))
+        XCTAssertTrue(result.wasInserted)
+        XCTAssertEqual(attempt.id, result.attempt.id)
+        XCTAssertEqual(attempt.finishedAt, backfillDate)
+        XCTAssertEqual(attempt.leftCount, 3)
+        XCTAssertEqual(attempt.leftDurationMilliseconds, 90_000)
+        XCTAssertEqual(attempt.completions.count, 3)
+        XCTAssertEqual(attempt.mostPracticedPreset(for: .left)?.bpm, 144)
+        XCTAssertEqual(event.leftCount, 3)
+        XCTAssertEqual(plan.id, originalPlan.id)
+        XCTAssertEqual(plan.enabledAt, originalPlan.enabledAt)
+        XCTAssertEqual(plan.baseline.left, originalPlan.baseline.left + 3)
+        XCTAssertEqual(section.goalProgress?.completed.left, 0)
+        XCTAssertEqual(store.completionPercentage(songID: songID), 0)
+    }
+
+    @MainActor
+    func testPracticeLibraryDailyBackfillUsesHistoricalGoalKeyAndSnapshots() throws {
+        let container = try makeInMemoryPracticeContainer()
+        let context = container.mainContext
+        let store = try PracticeLibraryStore(modelContext: context)
+        let sectionID = UUID()
+        let songID = try store.saveSong(
+            id: nil,
+            name: "每日补录测试",
+            group: "测试",
+            sections: [PracticeSectionDraft(id: sectionID, name: "完整练习")],
+            leftGoal: 10,
+            rightGoal: 0,
+            bothGoal: 0,
+            multiplier: 1,
+            resetsDaily: true,
+            endDate: .now.addingTimeInterval(30 * 86_400),
+            archived: false
+        )
+        let plan = try XCTUnwrap(store.event(id: sectionID)?.goalPlan)
+        let backfillDate = plan.enabledAt.addingTimeInterval(-7 * 86_400)
+        let historicalDay = PracticeDailyGoal.localDay(
+            containing: backfillDate,
+            timeZone: .current
+        )
+        let historicalKey = PracticeDailyGoal.makeKey(
+            eventID: sectionID,
+            planID: plan.id,
+            localDay: historicalDay
+        )
+        let currentDay = PracticeDailyGoal.localDay(
+            containing: .now,
+            timeZone: .current
+        )
+        let currentKey = PracticeDailyGoal.makeKey(
+            eventID: sectionID,
+            planID: plan.id,
+            localDay: currentDay
+        )
+
+        let result = try store.addRecord(
+            songID: songID,
+            sectionID: sectionID,
+            date: backfillDate,
+            hand: .left,
+            bpm: 108,
+            note: "八分音符",
+            duration: 20,
+            count: 3
+        )
+        let attempt = result.attempt
+        let historicalGoal = try XCTUnwrap(PracticeDailyGoal.today(
+            for: sectionID,
+            planID: plan.id,
+            at: backfillDate,
+            timeZone: .current,
+            in: context
+        ))
+
+        XCTAssertTrue(result.wasInserted)
+        XCTAssertNotEqual(historicalKey, currentKey)
+        XCTAssertEqual(attempt.dailyGoalKey, historicalKey)
+        XCTAssertEqual(attempt.goalLaunchContext?.dailyGoalKey, historicalKey)
+        XCTAssertEqual(
+            attempt.goalReport?.launchContext.dailyGoalKey,
+            historicalKey
+        )
+        XCTAssertEqual(attempt.goalReport?.dailyProgress?.completed.left, 3)
+        XCTAssertEqual(historicalGoal.key, historicalKey)
+        XCTAssertEqual(historicalGoal.localDay, historicalDay)
+        XCTAssertEqual(
+            try PracticeDailyGoal.history(for: sectionID, in: context).map(\.key),
+            [historicalKey]
+        )
+        XCTAssertNil(try PracticeDailyGoal.today(
+            for: sectionID,
+            planID: plan.id,
+            at: .now,
+            timeZone: .current,
+            in: context
+        ))
+        XCTAssertEqual(store.eventSnapshot(id: sectionID)?.goalProgress?.completed.left, 0)
+        XCTAssertEqual(store.completionPercentage(songID: songID), 0)
+    }
+
+    @MainActor
+    func testPracticeLibraryNewSectionUsesPersistedDefaultPreset() throws {
+        let container = try makeInMemoryPracticeContainer()
+        let context = container.mainContext
+        let store = try PracticeLibraryStore(modelContext: context)
+        let sectionID = UUID()
+        var defaultPreset = MetronomePreset.standard
+        defaultPreset.bpm = 137
+        defaultPreset.beats = 9
+
+        let songID = try store.saveSong(
+            id: nil,
+            name: "默认参数曲目",
+            group: "测试",
+            sections: [PracticeSectionDraft(id: sectionID, name: "新段落")],
+            leftGoal: 0,
+            rightGoal: 0,
+            bothGoal: 0,
+            multiplier: 1,
+            resetsDaily: false,
+            endDate: .now.addingTimeInterval(30 * 86_400),
+            archived: false,
+            newSectionPreset: defaultPreset
+        )
+
+        let song = try XCTUnwrap(store.song(id: songID))
+        let section = try XCTUnwrap(song.sections.first)
+        let launch = store.launch(song: song, section: section)
+        XCTAssertEqual(store.event(id: sectionID)?.preset, defaultPreset.normalized)
+        XCTAssertEqual(launch.preset, defaultPreset.normalized)
+    }
+
+    @MainActor
+    func testPracticeLibraryAutomaticallyArchivesAfterEndDate() throws {
+        let container = try makeInMemoryPracticeContainer()
+        let context = container.mainContext
+        let store = try PracticeLibraryStore(modelContext: context)
+        let songID = try store.saveSong(
+            id: nil,
+            name: "已到期曲目",
+            group: "测试",
+            sections: [PracticeSectionDraft(name: "完整练习")],
+            leftGoal: 0,
+            rightGoal: 0,
+            bothGoal: 0,
+            multiplier: 1,
+            resetsDaily: false,
+            endDate: .now.addingTimeInterval(-2 * 86_400),
+            archived: false
+        )
+
+        XCTAssertFalse(store.activeSongs.contains { $0.id == songID })
+        XCTAssertTrue(store.archivedSongs.contains { $0.id == songID })
+        XCTAssertEqual(store.songModel(id: songID)?.isArchived, true)
+    }
+
+    @MainActor
     private func makeInMemoryPracticeContainer() throws -> ModelContainer {
         let schema = Schema([
+            PracticeSong.self,
             PracticeEvent.self,
             PracticeAttempt.self,
             PracticeFolder.self,
@@ -3334,7 +5716,8 @@ final class MetronomePresetTests: XCTestCase {
         ])
         let configuration = ModelConfiguration(
             schema: schema,
-            isStoredInMemoryOnly: true
+            isStoredInMemoryOnly: true,
+            cloudKitDatabase: .none
         )
         return try ModelContainer(
             for: schema,

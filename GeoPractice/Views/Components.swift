@@ -1,32 +1,57 @@
 import Foundation
+import ObjectiveC
 import SwiftUI
+import UIKit
 
 enum GeoTheme {
-    static let background = Color(white: 0.025)
-    static let backgroundEnd = Color(white: 0.012)
-    static let panel = Color(white: 0.065)
-    static let panelRaised = Color(white: 0.10)
-    static let line = Color(white: 0.22)
-    static let text = Color(white: 0.97)
-    static let muted = Color(white: 0.54)
+    static let background = adaptive(light: .white, dark: .black)
+    static let backgroundEnd = background
+    static let panel = adaptive(
+        light: UIColor(white: 0.955, alpha: 1),
+        dark: UIColor(white: 0.065, alpha: 1)
+    )
+    static let panelRaised = adaptive(
+        light: UIColor(white: 0.91, alpha: 1),
+        dark: UIColor(white: 0.10, alpha: 1)
+    )
+    static let line = adaptive(
+        light: UIColor(white: 0.78, alpha: 1),
+        dark: UIColor(white: 0.22, alpha: 1)
+    )
+    static let text = adaptive(
+        light: UIColor(white: 0.03, alpha: 1),
+        dark: UIColor(white: 0.97, alpha: 1)
+    )
+    static let muted = adaptive(
+        light: UIColor(white: 0.42, alpha: 1),
+        dark: UIColor(white: 0.54, alpha: 1)
+    )
+    /// A foreground-colored neutral used for strokes and restrained glass tint.
+    static let surfaceInk = text
+    /// Blue is reserved for binary on/off controls.
+    static let controlAccent = Color(red: 0, green: 122.0 / 255.0, blue: 1)
+    /// Selection controls keep the original neutral high-contrast treatment.
+    static let selectionFill = Color.white.opacity(0.92)
+    static let selectionText = Color.black
+    /// Navigation alone inverts its selected background in the light theme.
+    static let navigationSelectionFill = adaptive(
+        light: UIColor.black.withAlphaComponent(0.92),
+        dark: UIColor.white.withAlphaComponent(0.92)
+    )
+    /// The floating navigation keeps its selected label blue in both themes.
+    static let navigationSelectionText = controlAccent
+
+    private static func adaptive(light: UIColor, dark: UIColor) -> Color {
+        Color(uiColor: UIColor { traits in
+            traits.userInterfaceStyle == .light ? light : dark
+        })
+    }
 }
 
 struct GeoBackground: View {
     var body: some View {
-        ZStack {
-            LinearGradient(
-                colors: [Color(white: 0.045), GeoTheme.backgroundEnd],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            RadialGradient(
-                colors: [Color.white.opacity(0.055), .clear],
-                center: UnitPoint(x: 0.5, y: 0.05),
-                startRadius: 0,
-                endRadius: 460
-            )
-        }
-        .ignoresSafeArea()
+        GeoTheme.background
+            .ignoresSafeArea()
     }
 }
 
@@ -37,21 +62,140 @@ struct GeoCard<Content: View>: View {
     var body: some View {
         content
             .padding(20)
-            .background {
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(
-                        LinearGradient(
-                            colors: [Color(white: 0.1).opacity(0.96), Color(white: 0.045).opacity(0.98)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .overlay {
-                        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                            .stroke(Color.white.opacity(0.075), lineWidth: 1)
+            .geoCardSurface(cornerRadius: cornerRadius)
+    }
+}
+
+/// The exact material selected as “variant 7” in the glass lab.
+///
+/// Keep this recipe deliberately free of tint, gradients and decorative
+/// strokes. Those extra layers were the reason the later experiment no
+/// longer matched the texture that was approved in the comparison screen.
+@available(iOS 26.0, *)
+private struct GeoVariant7CardBackground: UIViewRepresentable {
+    let cornerRadius: CGFloat
+
+    func makeUIView(context: Context) -> UIVisualEffectView {
+        let view = UIVisualEffectView(effect: makeEffect())
+        view.backgroundColor = .clear
+        view.isUserInteractionEnabled = false
+        view.layer.cornerRadius = cornerRadius
+        view.layer.cornerCurve = .continuous
+        view.clipsToBounds = true
+        return view
+    }
+
+    func updateUIView(_ view: UIVisualEffectView, context: Context) {
+        view.layer.cornerRadius = cornerRadius
+        if view.effect == nil {
+            view.effect = makeEffect()
+        }
+    }
+
+    private func makeEffect() -> UIVisualEffect {
+        makeGeoVariant7Effect() ?? UIBlurEffect(style: .systemUltraThinMaterial)
+    }
+}
+
+@available(iOS 26.0, *)
+private func makeGeoVariant7Effect() -> UIVisualEffect? {
+    guard let glassClass = NSClassFromString("_UIViewGlass") as? NSObject.Type else {
+        return nil
+    }
+
+    let initializer = NSSelectorFromString("initWithVariant:size:smoothness:subdued:")
+    guard let method = class_getInstanceMethod(glassClass, initializer) else {
+        return nil
+    }
+
+    typealias GlassInitializer = @convention(c) (
+        AnyObject,
+        Selector,
+        Int,
+        Int,
+        Double,
+        Bool
+    ) -> Unmanaged<AnyObject>?
+
+    let implementation = method_getImplementation(method)
+    let initialize = unsafeBitCast(implementation, to: GlassInitializer.self)
+    guard let allocated = (glassClass as AnyObject)
+        .perform(NSSelectorFromString("alloc"))?
+        .takeUnretainedValue(),
+          let glass = initialize(
+              allocated,
+              initializer,
+              7,
+              0,
+              0,
+              false
+          )?.takeUnretainedValue() as? NSObject else {
+        return nil
+    }
+
+    glass.setValue(true, forKey: "contentLensing")
+    glass.setValue(false, forKey: "excludingControlLensing")
+    glass.setValue(false, forKey: "excludingControlDisplacement")
+    glass.setValue(true, forKey: "flexible")
+
+    let effectFactory = NSSelectorFromString("effectWithGlass:")
+    guard (UIGlassEffect.self as AnyObject).responds(to: effectFactory) else {
+        return nil
+    }
+    return (UIGlassEffect.self as AnyObject)
+        .perform(effectFactory, with: glass)?
+        .takeUnretainedValue() as? UIVisualEffect
+}
+
+private struct GeoCardSurfaceModifier: ViewModifier {
+    let cornerRadius: CGFloat
+
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorScheme) private var colorScheme
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if reduceTransparency {
+            content
+                .background(
+                    GeoTheme.panelRaised,
+                    in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                )
+        } else {
+#if compiler(>=6.2)
+            if #available(iOS 26.0, *) {
+                content
+                    .background {
+                        GeoVariant7CardBackground(cornerRadius: cornerRadius)
+                            .allowsHitTesting(false)
                     }
-                    .shadow(color: .black.opacity(0.28), radius: 30, y: 20)
+                    .shadow(
+                        color: .black.opacity(colorScheme == .light ? 0.075 : 0.22),
+                        radius: colorScheme == .light ? 14 : 24,
+                        y: colorScheme == .light ? 7 : 14
+                    )
+            } else {
+                materialCard(content)
             }
+#else
+            materialCard(content)
+#endif
+        }
+    }
+
+    private func materialCard(_ content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        return content
+            .background(.ultraThinMaterial, in: shape)
+            .background(GeoTheme.background.opacity(0.12), in: shape)
+    }
+}
+
+extension View {
+    /// Applies the shared card-only surface. Controls intentionally use their
+    /// own glass styles so a button never creates a second nested card layer.
+    func geoCardSurface(cornerRadius: CGFloat = 22) -> some View {
+        modifier(GeoCardSurfaceModifier(cornerRadius: cornerRadius))
     }
 }
 
@@ -60,6 +204,7 @@ struct GeoCard<Content: View>: View {
 /// translucent: the dark shapes in the V4 sketch describe glass, not black ink.
 struct GeoGlassCapsule<Content: View>: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorScheme) private var colorScheme
     @ViewBuilder var content: Content
 
     var body: some View {
@@ -69,13 +214,17 @@ struct GeoGlassCapsule<Content: View>: View {
                     .background(GeoTheme.panelRaised, in: Capsule(style: .continuous))
                     .overlay {
                         Capsule(style: .continuous)
-                            .stroke(Color.white.opacity(0.20), lineWidth: 1)
+                            .stroke(GeoTheme.surfaceInk.opacity(0.20), lineWidth: 1)
                     }
             } else {
                 translucentGlass
             }
         }
-        .shadow(color: .black.opacity(0.22), radius: 18, y: 10)
+        .shadow(
+            color: .black.opacity(colorScheme == .light ? 0.08 : 0.22),
+            radius: colorScheme == .light ? 11 : 18,
+            y: colorScheme == .light ? 5 : 10
+        )
     }
 
     /// Older Swift compilers do not expose Liquid Glass symbols, so they
@@ -87,7 +236,7 @@ struct GeoGlassCapsule<Content: View>: View {
             content
                 .glassEffect(
                     .regular
-                        .tint(Color.white.opacity(0.035))
+                        .tint(GeoTheme.surfaceInk.opacity(0.035))
                         .interactive(),
                     in: Capsule(style: .continuous)
                 )
@@ -106,7 +255,7 @@ struct GeoGlassCapsule<Content: View>: View {
                 Capsule(style: .continuous)
                     .fill(
                         LinearGradient(
-                            colors: [Color.white.opacity(0.10), Color.white.opacity(0.025)],
+                            colors: [GeoTheme.surfaceInk.opacity(0.10), GeoTheme.surfaceInk.opacity(0.025)],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         )
@@ -117,7 +266,7 @@ struct GeoGlassCapsule<Content: View>: View {
                 Capsule(style: .continuous)
                     .stroke(
                         LinearGradient(
-                            colors: [Color.white.opacity(0.28), Color.white.opacity(0.07)],
+                            colors: [GeoTheme.surfaceInk.opacity(0.28), GeoTheme.surfaceInk.opacity(0.07)],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         ),
@@ -125,6 +274,41 @@ struct GeoGlassCapsule<Content: View>: View {
                     )
                     .allowsHitTesting(false)
             }
+    }
+}
+
+/// A toolbar icon label that leaves iOS 26's native toolbar glass as the only
+/// rendered surface. Applying `GeoGlassCapsule` inside a toolbar button creates
+/// a second glass layer, which is especially visible in the light appearance as
+/// square highlights, doubled rims and an oversized shadow. Older systems still
+/// receive the existing material fallback because they do not provide native
+/// Liquid Glass toolbar backgrounds.
+struct GeoToolbarIconLabel: View {
+    let symbol: String
+    var size: CGFloat = 44
+
+    @ViewBuilder
+    var body: some View {
+#if compiler(>=6.2)
+        if #available(iOS 26.0, *) {
+            icon
+        } else {
+            legacyGlassIcon
+        }
+#else
+        legacyGlassIcon
+#endif
+    }
+
+    private var icon: some View {
+        Image(systemName: symbol)
+            .frame(width: size, height: size)
+    }
+
+    private var legacyGlassIcon: some View {
+        GeoGlassCapsule {
+            icon
+        }
     }
 }
 
@@ -137,7 +321,7 @@ struct CardTitle: View {
             Text(title)
                 .font(.system(size: 13, weight: .bold))
                 .tracking(1)
-                .foregroundStyle(Color(white: 0.88))
+                .foregroundStyle(GeoTheme.text.opacity(0.88))
             Spacer()
             Text(subtitle)
                 .font(.system(size: 9, weight: .semibold))
@@ -239,12 +423,15 @@ struct TempoScrubber: View {
                 }
                 .frame(maxWidth: .infinity, minHeight: 128)
                 .background(
-                    Color(white: 0.04),
+                    GeoTheme.panel,
                     in: RoundedRectangle(cornerRadius: 18, style: .continuous)
                 )
                 .overlay {
                     RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .stroke(Color.white.opacity(draftBPM == nil ? 0.08 : 0.26), lineWidth: 1)
+                        .stroke(
+                            GeoTheme.surfaceInk.opacity(draftBPM == nil ? 0.08 : 0.26),
+                            lineWidth: 1
+                        )
                 }
             }
         }
@@ -307,7 +494,7 @@ struct TempoScrubber: View {
         .overlay(alignment: .bottom) {
             if draftBPM != nil {
                 Capsule()
-                    .fill(Color.white.opacity(0.62))
+                    .fill(GeoTheme.surfaceInk.opacity(0.62))
                     .frame(width: compact ? 26 : 48, height: 1.5)
             }
         }
@@ -444,7 +631,10 @@ struct GeoSegmentButton: View {
     let title: String
     var symbol: String?
     let isActive: Bool
+    var activeForeground: Color? = nil
     let action: () -> Void
+
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     var body: some View {
         Button(action: action) {
@@ -457,22 +647,44 @@ struct GeoSegmentButton: View {
                     .minimumScaleFactor(0.75)
             }
             .font(.caption.weight(.bold))
-            .foregroundStyle(isActive ? GeoTheme.text : GeoTheme.muted)
+            .foregroundStyle(
+                isActive ? (activeForeground ?? GeoTheme.text) : GeoTheme.muted
+            )
             .frame(maxWidth: .infinity, minHeight: 44)
             .padding(.horizontal, 5)
-            .background(
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .fill(isActive ? GeoTheme.panelRaised : .clear)
-                    .overlay {
-                        if isActive {
-                            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                .stroke(Color.white.opacity(0.07), lineWidth: 1)
-                        }
-                    }
-            )
+            .background { if isActive { activeBackground } }
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(isActive ? .isSelected : [])
+    }
+
+    @ViewBuilder
+    private var activeBackground: some View {
+        let shape = RoundedRectangle(cornerRadius: 9, style: .continuous)
+#if compiler(>=6.2)
+        if #available(iOS 26.0, *), !reduceTransparency {
+            // No shared glassEffectID / GlassEffectContainer here: stacking a
+            // morphing glass shape per segment corrupted rendering (the active
+            // label went fully opaque and unreadable). A plain per-button
+            // glass tint still reads as "liquid glass on selection" without
+            // the cross-item morph animation.
+            shape
+                .fill(.clear)
+                .glassEffect(.regular.tint(GeoTheme.surfaceInk.opacity(0.05)), in: shape)
+        } else {
+            legacyBackground(shape)
+        }
+#else
+        legacyBackground(shape)
+#endif
+    }
+
+    private func legacyBackground(_ shape: RoundedRectangle) -> some View {
+        shape
+            .fill(GeoTheme.panelRaised)
+            .overlay {
+                shape.stroke(GeoTheme.surfaceInk.opacity(0.07), lineWidth: 1)
+            }
     }
 }
 
@@ -486,10 +698,10 @@ struct GeoSegmentContainer<Content: View>: View {
         .padding(4)
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color(white: 0.04))
+                .fill(GeoTheme.panel)
                 .overlay {
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(Color.white.opacity(0.06), lineWidth: 1)
+                        .stroke(GeoTheme.surfaceInk.opacity(0.06), lineWidth: 1)
                 }
         )
     }
@@ -510,14 +722,7 @@ struct CountBadge: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 9)
-        .background(
-            RoundedRectangle(cornerRadius: 11, style: .continuous)
-                .fill(Color(white: 0.04))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 11, style: .continuous)
-                        .stroke(Color.white.opacity(0.055), lineWidth: 1)
-                }
-        )
+        .geoCardSurface(cornerRadius: 11)
         .foregroundStyle(GeoTheme.text)
     }
 }

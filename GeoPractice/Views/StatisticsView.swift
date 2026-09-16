@@ -95,7 +95,7 @@ struct StatisticsView: View {
                 .scrollIndicators(.hidden)
             }
             .navigationTitle("统计")
-            .toolbarBackground(GeoTheme.background.opacity(0.94), for: .navigationBar)
+            .toolbarBackground(GeoTheme.background, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
         }
         .toolbar(.visible, for: .tabBar)

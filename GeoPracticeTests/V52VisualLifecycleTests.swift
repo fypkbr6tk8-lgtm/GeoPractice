@@ -269,6 +269,33 @@ final class V52VisualLifecycleTests: XCTestCase {
             0.32,
             accuracy: 0.000_001
         )
+        XCTAssertEqual(
+            BeatBounceMotionModel.normalizedEventHeight(
+                eventProgress: 0,
+                toward: .strong,
+                startsFromOrigin: true,
+                motionScale: 0.32
+            ),
+            0.32,
+            accuracy: 0.000_001,
+            "降低动态效果也必须缩小首次从中心落下的位移"
+        )
+        XCTAssertEqual(
+            BeatBounceMotionModel.normalizedArcHeight(
+                eventProgress: 0.25,
+                tier: .strong
+            ),
+            sqrt(0.5),
+            accuracy: 0.000_001
+        )
+        XCTAssertEqual(
+            BeatBounceMotionModel.normalizedArcHeight(
+                eventProgress: 0.75,
+                tier: .strong
+            ),
+            sqrt(0.5),
+            accuracy: 0.000_001
+        )
     }
 
     func testEveryPostLaunchTrainingPulseLandsIncludingMeasureBoundary() throws {
@@ -346,6 +373,15 @@ final class V52VisualLifecycleTests: XCTestCase {
     func testScheduleTopologyResetAcceptsRestartedCycleZeroImmediately() {
         var lifecycle = BeatVisualLifecycle(beats: 4)
         lifecycle.resume()
+        for beat in 0..<4 {
+            lifecycle.record(
+                beat: beat,
+                subdivision: 0,
+                cycle: 0,
+                beats: 4,
+                pulsesPerBeat: 4
+            )
+        }
         lifecycle.record(
             beat: 3,
             subdivision: 3,
@@ -353,12 +389,17 @@ final class V52VisualLifecycleTests: XCTestCase {
             beats: 4,
             pulsesPerBeat: 4
         )
+        let establishedPlacements = lifecycle.visibleEdgePlacements
+        XCTAssertTrue(lifecycle.hasEstablishedStructure)
         XCTAssertEqual(lifecycle.currentMeasureCycle, 7)
 
         lifecycle.resetScheduleTopology(beats: 4, isPlaying: true)
         XCTAssertFalse(lifecycle.isPaused)
         XCTAssertNil(lifecycle.currentMeasureCycle)
-        XCTAssertTrue(lifecycle.visibleEdgePlacements.isEmpty)
+        XCTAssertEqual(lifecycle.visibleEdgePlacements, establishedPlacements)
+        XCTAssertEqual(lifecycle.phase, .orbiting)
+        XCTAssertNil(lifecycle.currentBeatIndex)
+        XCTAssertNil(lifecycle.ballPhase)
 
         let transition = lifecycle.record(
             beat: 0,
@@ -367,9 +408,128 @@ final class V52VisualLifecycleTests: XCTestCase {
             beats: 4,
             pulsesPerBeat: 2
         )
-        XCTAssertEqual(transition?.kind, .measureStart)
-        XCTAssertEqual(lifecycle.visibleEdgeIndices, [0])
+        XCTAssertEqual(transition?.kind, .gapRecovery)
+        XCTAssertTrue(transition?.rotations.isEmpty == true)
+        XCTAssertTrue(transition?.insertedPlacements.isEmpty == true)
+        XCTAssertEqual(
+            lifecycle.visibleEdgeIndices,
+            establishedPlacements.map(\.slotIndex),
+            "重排首拍只重绑定音乐身份，不能让既有多边形转一大圈"
+        )
+        XCTAssertEqual(
+            lifecycle.visibleEdgePlacements.first(where: { $0.slotIndex == 0 })?.beatIdentity,
+            0,
+            "重启后的水平落地点必须与当前音频第 1 拍身份一致"
+        )
         XCTAssertEqual(lifecycle.currentMeasureCycle, 0)
+    }
+
+    func testScheduleTopologyResetPreservesPartialConstructionWithoutShrinking() {
+        var lifecycle = BeatVisualLifecycle(beats: 4)
+        lifecycle.record(beat: 0, subdivision: 0, cycle: 0, beats: 4)
+        lifecycle.record(beat: 1, subdivision: 0, cycle: 0, beats: 4)
+        XCTAssertEqual(lifecycle.builtEdgeCount, 2)
+
+        lifecycle.resetScheduleTopology(beats: 4, isPlaying: true)
+        XCTAssertEqual(lifecycle.builtEdgeCount, 2)
+        XCTAssertEqual(lifecycle.phase, .building)
+
+        let recovery = lifecycle.record(
+            beat: 0,
+            subdivision: 0,
+            cycle: 0,
+            beats: 4,
+            pulsesPerBeat: 2
+        )
+        XCTAssertEqual(recovery?.kind, .gapRecovery)
+        XCTAssertEqual(lifecycle.builtEdgeCount, 2)
+        XCTAssertTrue(recovery?.insertedPlacements.isEmpty == true)
+        XCTAssertEqual(
+            lifecycle.visibleEdgePlacements.first(where: { $0.slotIndex == 0 })?.beatIdentity,
+            0
+        )
+    }
+
+    func testEverySupportedPolygonResyncsWithoutLargeRotationThenAdvancesOneSlot() throws {
+        for beats in 3...9 {
+            for oldBeat in 0..<beats {
+                var lifecycle = completedLifecycle(beats: beats)
+                for beat in 0...oldBeat {
+                    lifecycle.record(
+                        beat: beat,
+                        subdivision: 0,
+                        cycle: 1,
+                        beats: beats,
+                        pulsesPerBeat: 4
+                    )
+                }
+                let beforeResync = lifecycle.visibleEdgePlacements
+                let beforeByGeneration = Dictionary(
+                    uniqueKeysWithValues: beforeResync.map {
+                        ($0.generationIndex, $0.slotIndex)
+                    }
+                )
+
+                lifecycle.resetScheduleTopology(beats: beats, isPlaying: true)
+                let resync = try XCTUnwrap(lifecycle.record(
+                    beat: 0,
+                    subdivision: 0,
+                    cycle: 0,
+                    beats: beats,
+                    pulsesPerBeat: 2
+                ))
+
+                XCTAssertEqual(resync.kind, .gapRecovery)
+                XCTAssertTrue(resync.rotations.isEmpty)
+                XCTAssertTrue(resync.insertedPlacements.isEmpty)
+                XCTAssertEqual(lifecycle.visibleEdgeIndices, beforeResync.map(\.slotIndex))
+                XCTAssertEqual(
+                    Set(lifecycle.visibleEdgePlacements.map(\.beatIdentity)),
+                    Set(0..<beats)
+                )
+                XCTAssertEqual(
+                    lifecycle.visibleEdgePlacements.first(where: { $0.slotIndex == 0 })?.beatIdentity,
+                    0
+                )
+                for placement in lifecycle.visibleEdgePlacements {
+                    let oldSlot = try XCTUnwrap(beforeByGeneration[placement.generationIndex])
+                    let clockwiseAdvance = (placement.slotIndex - oldSlot + beats) % beats
+                    XCTAssertTrue(
+                        clockwiseAdvance == 0 || clockwiseAdvance == 1,
+                        "\(beats) 拍从旧第 \(oldBeat + 1) 拍重排时转了 \(clockwiseAdvance) 格"
+                    )
+                }
+
+                let beforeAdvance = Dictionary(
+                    uniqueKeysWithValues: lifecycle.visibleEdgePlacements.map {
+                        ($0.generationIndex, $0.slotIndex)
+                    }
+                )
+                let advance = try XCTUnwrap(lifecycle.record(
+                    beat: 1,
+                    subdivision: 0,
+                    cycle: 0,
+                    beats: beats,
+                    pulsesPerBeat: 2
+                ))
+                XCTAssertEqual(advance.kind, .beatAdvance)
+                XCTAssertEqual(advance.rotations.count, beats)
+                XCTAssertTrue(advance.rotations.allSatisfy {
+                    $0.toSlotIndex == $0.fromSlotIndex + 1
+                })
+                for placement in lifecycle.visibleEdgePlacements {
+                    let oldSlot = try XCTUnwrap(beforeAdvance[placement.generationIndex])
+                    XCTAssertEqual(
+                        (placement.slotIndex - oldSlot + beats) % beats,
+                        1
+                    )
+                }
+                XCTAssertEqual(
+                    lifecycle.visibleEdgePlacements.first(where: { $0.slotIndex == 0 })?.beatIdentity,
+                    1
+                )
+            }
+        }
     }
 
     func testBounceContactPlacesTheBallOutsideTheEdgeStroke() {
@@ -689,11 +849,649 @@ final class V52VisualLifecycleTests: XCTestCase {
         }
     }
 
-    func testNextCycleReplacesCompletePolygonWithOneHorizontalEdge() throws {
+    func testSharedEdgePresentationUsesOneSmoothRotationAndDelayedReveal() throws {
+        var lifecycle = BeatVisualLifecycle(beats: 4)
+        lifecycle.record(beat: 0, subdivision: 0, cycle: 0, beats: 4)
+        let transition = try XCTUnwrap(lifecycle.record(
+            beat: 1,
+            subdivision: 0,
+            cycle: 0,
+            beats: 4
+        ))
+
+        let start = BeatPolygonPresentationModel.edgePresentations(
+            placements: lifecycle.visibleEdgePlacements,
+            transition: transition,
+            eventProgress: 0,
+            strongBeatIndices: [0],
+            secondaryAccentIndices: [2]
+        )
+        XCTAssertEqual(start.map(\.slot), [0, 0])
+        XCTAssertEqual(start.map(\.drawProgress), [1, 0])
+
+        let midpoint = BeatPolygonPresentationModel.edgePresentations(
+            placements: lifecycle.visibleEdgePlacements,
+            transition: transition,
+            eventProgress: (
+                BeatPolygonPresentationModel.rotationStartFraction
+                    + BeatPolygonPresentationModel.rotationCompletionFraction
+            ) / 2,
+            strongBeatIndices: [0],
+            secondaryAccentIndices: [2]
+        )
+        XCTAssertEqual(midpoint[0].slot, 0.5, accuracy: 0.000_001)
+        XCTAssertGreaterThan(midpoint[1].drawProgress, 0.5)
+        XCTAssertEqual(Set(midpoint.map(\.lineWidth)), [
+            BeatPolygonPresentationModel.uniformLineWidth
+        ])
+
+        let finished = BeatPolygonPresentationModel.edgePresentations(
+            placements: lifecycle.visibleEdgePlacements,
+            transition: transition,
+            eventProgress: 1,
+            strongBeatIndices: [0],
+            secondaryAccentIndices: [2]
+        )
+        XCTAssertEqual(finished.map(\.slot), [1, 0])
+        XCTAssertEqual(finished.map(\.drawProgress), [1, 1])
+    }
+
+    func testEveryAudibleMainBeatStartsOnItsOwnContactEdge() throws {
+        for beats in 3...9 {
+            for pulsesPerBeat in [1, 2, 4] {
+                var lifecycle = BeatVisualLifecycle(beats: beats)
+                let strongBeatIndices: Set<Int> = [0]
+                let secondaryAccentIndices: Set<Int> = [2]
+
+                for beat in 0..<beats {
+                    for subdivision in 0..<pulsesPerBeat {
+                        lifecycle.record(
+                            beat: beat,
+                            subdivision: subdivision,
+                            cycle: 0,
+                            beats: beats,
+                            pulsesPerBeat: pulsesPerBeat
+                        )
+                        let geometry = BeatPolygonPresentationModel.intervalGeometry(
+                            lifecycle: lifecycle,
+                            beat: beat,
+                            subdivision: subdivision,
+                            cycle: 0,
+                            pulsesPerBeat: pulsesPerBeat
+                        )
+                        let atSound = BeatPolygonPresentationModel.edgePresentations(
+                            placements: geometry.placements,
+                            transition: geometry.transition,
+                            eventProgress: 0,
+                            strongBeatIndices: strongBeatIndices,
+                            secondaryAccentIndices: secondaryAccentIndices
+                        )
+                        let contact = try XCTUnwrap(contactPresentation(
+                            in: atSound,
+                            beatCount: beats
+                        ))
+                        XCTAssertEqual(
+                            contact.beatIdentity,
+                            beat,
+                            "\(beats)拍、每拍\(pulsesPerBeat)事件、地址\(beat):\(subdivision) 声音响起时接触边错位"
+                        )
+
+                        if subdivision == 0 {
+                            let expectedAccent: BeatEdgeAccentLevel = if beat == 0 {
+                                .strong
+                            } else if beat == 2 {
+                                .secondary
+                            } else {
+                                .weak
+                            }
+                            XCTAssertEqual(contact.accentLevel, expectedAccent)
+                        }
+
+                        let nextTarget = try XCTUnwrap(BeatBounceMotionModel.nextTarget(
+                            afterBeat: beat,
+                            subdivision: subdivision,
+                            beats: beats,
+                            pulsesPerBeat: pulsesPerBeat,
+                            strongBeatIndices: strongBeatIndices,
+                            secondaryAccentIndices: secondaryAccentIndices
+                        ))
+                        XCTAssertEqual(
+                            BeatBounceMotionModel.normalizedAudibleEventHeight(
+                                eventProgress: 0,
+                                toward: nextTarget.heightTier
+                            ),
+                            0,
+                            accuracy: 0.000_001
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    func testFinalSubdivisionPreparesNextContactBeforeItsSound() throws {
+        var lifecycle = BeatVisualLifecycle(beats: 5)
+        for beat in 0..<5 {
+            for subdivision in 0..<4 {
+                lifecycle.record(
+                    beat: beat,
+                    subdivision: subdivision,
+                    cycle: 0,
+                    beats: 5,
+                    pulsesPerBeat: 4
+                )
+
+                let geometry = BeatPolygonPresentationModel.intervalGeometry(
+                    lifecycle: lifecycle,
+                    beat: beat,
+                    subdivision: subdivision,
+                    cycle: 0,
+                    pulsesPerBeat: 4
+                )
+                if subdivision < 3 {
+                    XCTAssertNil(geometry.transition)
+                    continue
+                }
+
+                let start = BeatPolygonPresentationModel.edgePresentations(
+                    placements: geometry.placements,
+                    transition: geometry.transition,
+                    eventProgress: 0,
+                    strongBeatIndices: [0],
+                    secondaryAccentIndices: [2]
+                )
+                let end = BeatPolygonPresentationModel.edgePresentations(
+                    placements: geometry.placements,
+                    transition: geometry.transition,
+                    eventProgress: 1,
+                    strongBeatIndices: [0],
+                    secondaryAccentIndices: [2]
+                )
+                XCTAssertEqual(
+                    try XCTUnwrap(contactPresentation(in: start, beatCount: 5)).beatIdentity,
+                    beat
+                )
+                XCTAssertEqual(
+                    try XCTUnwrap(contactPresentation(in: end, beatCount: 5)).beatIdentity,
+                    (beat + 1) % 5
+                )
+            }
+        }
+    }
+
+    func testReducedMotionNeverShowsTheNextBeatAtTheCurrentSound() throws {
+        var lifecycle = completedLifecycle(beats: 5)
+        lifecycle.record(
+            beat: 4,
+            subdivision: 3,
+            cycle: 0,
+            beats: 5,
+            pulsesPerBeat: 4
+        )
+
+        let geometry = BeatPolygonPresentationModel.intervalGeometry(
+            lifecycle: lifecycle,
+            beat: 4,
+            subdivision: 3,
+            cycle: 0,
+            pulsesPerBeat: 4,
+            reduceMotion: true
+        )
+        XCTAssertNil(geometry.transition)
+        let presentation = BeatPolygonPresentationModel.edgePresentations(
+            placements: geometry.placements,
+            transition: geometry.transition,
+            eventProgress: 0,
+            strongBeatIndices: [0],
+            secondaryAccentIndices: [2],
+            reduceMotion: true
+        )
+        XCTAssertEqual(
+            try XCTUnwrap(contactPresentation(in: presentation, beatCount: 5)).beatIdentity,
+            4
+        )
+    }
+
+    func testFirstAudibleStrongPulseIsAlreadyAtImpact() {
+        XCTAssertEqual(
+            BeatBounceMotionModel.normalizedAudibleEventHeight(
+                eventProgress: 0,
+                toward: .strong
+            ),
+            0,
+            accuracy: 0.000_001
+        )
+        XCTAssertEqual(
+            BeatCollisionVisualModel.collisionAge(
+                eventAge: 0,
+                eventInterval: 0.5,
+                startsFromOrigin: false
+            ),
+            0,
+            accuracy: 0.000_001
+        )
+    }
+
+    func testInsertionRevealLeadsAndOverlapsDelayedRotation() {
+        XCTAssertEqual(
+            BeatPolygonPresentationModel.insertionProgress(eventProgress: 0),
+            0
+        )
+        XCTAssertEqual(
+            BeatPolygonPresentationModel.insertionProgress(
+                eventProgress: BeatPolygonPresentationModel.insertionDelayFraction
+            ),
+            0
+        )
+        XCTAssertEqual(
+            BeatPolygonPresentationModel.insertionProgress(
+                eventProgress: BeatPolygonPresentationModel.insertionCompletionFraction
+            ),
+            1,
+            accuracy: 0.000_001
+        )
+        XCTAssertLessThan(
+            BeatPolygonPresentationModel.rotationStartFraction,
+            BeatPolygonPresentationModel.insertionCompletionFraction
+        )
+        XCTAssertLessThan(
+            BeatPolygonPresentationModel.insertionCompletionFraction,
+            BeatPolygonPresentationModel.activeTransitionFraction
+        )
+        XCTAssertEqual(
+            BeatPolygonPresentationModel.transitionProgress(
+                eventProgress: BeatPolygonPresentationModel.rotationStartFraction - 0.01
+            ),
+            0
+        )
+        XCTAssertEqual(
+            BeatPolygonPresentationModel.transitionProgress(
+                eventProgress: BeatPolygonPresentationModel.rotationCompletionFraction
+            ),
+            1,
+            accuracy: 0.000_001
+        )
+    }
+
+    func testInitialInsertionWaitsForDescentImpactAndStillCompletesAtLanding() throws {
+        var lifecycle = BeatVisualLifecycle(beats: 4)
+        let initial = try XCTUnwrap(lifecycle.record(
+            beat: 0,
+            subdivision: 0,
+            cycle: 0,
+            beats: 4,
+            pulsesPerBeat: 4
+        ))
+
+        let beforeImpact = BeatPolygonPresentationModel.edgePresentations(
+            placements: lifecycle.visibleEdgePlacements,
+            transition: initial,
+            eventProgress: BeatPolygonPresentationModel.initialInsertionDelayFraction - 0.01,
+            strongBeatIndices: [0],
+            secondaryAccentIndices: [2],
+            startsFromOrigin: true
+        )
+        XCTAssertEqual(beforeImpact.map(\.drawProgress), [0])
+        XCTAssertGreaterThan(
+            BeatBounceMotionModel.normalizedInitialDescentHeight(
+                eventProgress: BeatPolygonPresentationModel.initialInsertionDelayFraction - 0.01
+            ),
+            0
+        )
+
+        XCTAssertEqual(
+            BeatBounceMotionModel.normalizedInitialDescentHeight(
+                eventProgress: BeatPolygonPresentationModel.initialInsertionDelayFraction
+            ),
+            0,
+            accuracy: 0.000_001,
+            "第一条线开始生长的同一帧，小球必须已经完成落地"
+        )
+        for progress in [0.63, 0.72, 0.84, 0.99] {
+            let presentation = BeatPolygonPresentationModel.edgePresentations(
+                placements: lifecycle.visibleEdgePlacements,
+                transition: initial,
+                eventProgress: progress,
+                strongBeatIndices: [0],
+                secondaryAccentIndices: [2],
+                startsFromOrigin: true
+            )
+            XCTAssertGreaterThan(presentation[0].drawProgress, 0)
+            XCTAssertEqual(
+                BeatBounceMotionModel.normalizedInitialDescentHeight(
+                    eventProgress: progress
+                ),
+                0,
+                accuracy: 0.000_001,
+                "只允许球落地后从撞击点向两侧生成第一条边"
+            )
+        }
+
+        let landed = BeatPolygonPresentationModel.edgePresentations(
+            placements: lifecycle.visibleEdgePlacements,
+            transition: initial,
+            eventProgress: 1,
+            strongBeatIndices: [0],
+            secondaryAccentIndices: [2],
+            startsFromOrigin: true
+        )
+        XCTAssertEqual(landed.map(\.drawProgress), [1])
+        XCTAssertEqual(
+            BeatBounceMotionModel.normalizedEventHeight(
+                eventProgress: 1,
+                toward: .strong,
+                startsFromOrigin: true
+            ),
+            0,
+            "后移首线生长不能改变首个 training event 的落地端点"
+        )
+    }
+
+    func testResumeBallStartsFrozenAndAvoidsSyntheticContactUntilStableEdge() {
+        let frozenHeight = 0.61
+        let target: (Double) -> Double = { progress in
+            BeatBounceMotionModel.normalizedEventHeight(
+                eventProgress: progress,
+                toward: .main,
+                startsFromOrigin: false
+            )
+        }
+
+        XCTAssertEqual(
+            BeatBounceMotionModel.resumeNormalizedHeight(
+                from: frozenHeight,
+                toward: target(0),
+                eventProgress: 0
+            ),
+            frozenHeight,
+            accuracy: 0.000_001,
+            "恢复的第一帧必须与暂停冻结帧完全一致"
+        )
+
+        for progress in [0.02, 0.10, 0.25, 0.50, 0.89] {
+            let height = BeatBounceMotionModel.resumeNormalizedHeight(
+                from: frozenHeight,
+                toward: target(progress),
+                eventProgress: progress
+            )
+            XCTAssertTrue(height.isFinite)
+            XCTAssertGreaterThan(
+                height,
+                0,
+                "桥接边尚未稳定到水平槽时，不得让球落到虚构基线上"
+            )
+            XCTAssertLessThanOrEqual(height, 1)
+        }
+
+        let joinProgress = BeatBounceMotionModel.resumeBlendCompletionFraction
+        XCTAssertEqual(
+            BeatBounceMotionModel.resumeNormalizedHeight(
+                from: frozenHeight,
+                toward: target(joinProgress),
+                eventProgress: joinProgress
+            ),
+            target(joinProgress),
+            accuracy: 0.000_001,
+            "边开始旋转前，小球必须已经无缝接入新的音乐弧线"
+        )
+        XCTAssertEqual(
+            BeatBounceMotionModel.resumeNormalizedHeight(
+                from: frozenHeight,
+                toward: target(1),
+                eventProgress: 1
+            ),
+            0,
+            accuracy: 0.000_001,
+            "只有边已经稳定回水平槽的事件终点才允许落地"
+        )
+    }
+
+    func testAllRetainedEdgesShareDelayedSmootherstepRotation() throws {
+        var lifecycle = completedLifecycle(beats: 5)
+        let transition = try XCTUnwrap(lifecycle.record(
+            beat: 0,
+            subdivision: 0,
+            cycle: 1,
+            beats: 5,
+            pulsesPerBeat: 4
+        ))
+        let beforeStart = BeatPolygonPresentationModel.edgePresentations(
+            placements: lifecycle.visibleEdgePlacements,
+            transition: transition,
+            eventProgress: BeatPolygonPresentationModel.rotationStartFraction - 0.01,
+            strongBeatIndices: [0],
+            secondaryAccentIndices: [2]
+        )
+        XCTAssertEqual(
+            beforeStart.map(\.slot),
+            transition.rotations.map { Double($0.fromSlotIndex) }
+        )
+
+        let midpoint = BeatPolygonPresentationModel.edgePresentations(
+            placements: lifecycle.visibleEdgePlacements,
+            transition: transition,
+            eventProgress: (
+                BeatPolygonPresentationModel.rotationStartFraction
+                    + BeatPolygonPresentationModel.rotationCompletionFraction
+            ) / 2,
+            strongBeatIndices: [0],
+            secondaryAccentIndices: [2]
+        )
+        for (edge, rotation) in zip(midpoint, transition.rotations) {
+            XCTAssertEqual(
+                edge.slot,
+                Double(rotation.fromSlotIndex) + 0.5,
+                accuracy: 0.000_001
+            )
+        }
+
+        let completed = BeatPolygonPresentationModel.edgePresentations(
+            placements: lifecycle.visibleEdgePlacements,
+            transition: transition,
+            eventProgress: BeatPolygonPresentationModel.rotationCompletionFraction,
+            strongBeatIndices: [0],
+            secondaryAccentIndices: [2]
+        )
+        XCTAssertEqual(
+            completed.map(\.slot),
+            transition.rotations.map { Double($0.toSlotIndex) }
+        )
+    }
+
+    func testResumePresentationStartsFrozenAndConvergesClockwiseToTarget() throws {
+        var lifecycle = completedLifecycle(beats: 5)
+        let wrap = try XCTUnwrap(lifecycle.record(
+            beat: 0,
+            subdivision: 0,
+            cycle: 1,
+            beats: 5,
+            pulsesPerBeat: 4
+        ))
+        let frozen = BeatPolygonPresentationModel.edgePresentations(
+            placements: lifecycle.visibleEdgePlacements,
+            transition: wrap,
+            eventProgress: (
+                BeatPolygonPresentationModel.rotationStartFraction
+                    + BeatPolygonPresentationModel.rotationCompletionFraction
+            ) / 2,
+            strongBeatIndices: [0],
+            secondaryAccentIndices: [2]
+        )
+        let target = BeatPolygonPresentationModel.edgePresentations(
+            placements: lifecycle.visibleEdgePlacements,
+            transition: nil,
+            eventProgress: 1,
+            strongBeatIndices: [0],
+            secondaryAccentIndices: [2]
+        )
+
+        XCTAssertEqual(
+            BeatPolygonPresentationModel.resumePresentations(
+                from: frozen,
+                toward: target,
+                beatCount: 5,
+                eventProgress: 0
+            ),
+            frozen
+        )
+        let resumedMidpoint = BeatPolygonPresentationModel.resumePresentations(
+            from: frozen,
+            toward: target,
+            beatCount: 5,
+            eventProgress: (
+                BeatPolygonPresentationModel.rotationStartFraction
+                    + BeatPolygonPresentationModel.rotationCompletionFraction
+            ) / 2
+        )
+        XCTAssertEqual(resumedMidpoint[0].slot, 4.75, accuracy: 0.000_001)
+        XCTAssertGreaterThanOrEqual(resumedMidpoint[0].slot, frozen[0].slot)
+        XCTAssertEqual(
+            BeatPolygonPresentationModel.resumePresentations(
+                from: frozen,
+                toward: target,
+                beatCount: 5,
+                eventProgress: BeatPolygonPresentationModel.rotationCompletionFraction
+            ),
+            target
+        )
+    }
+
+    func testResumePresentationIntroducesAWaitingTargetEdgeAtZeroLength() throws {
+        var lifecycle = BeatVisualLifecycle(beats: 4)
+        lifecycle.record(beat: 0, subdivision: 0, cycle: 0, beats: 4)
+        let frozen = BeatPolygonPresentationModel.edgePresentations(
+            placements: lifecycle.visibleEdgePlacements,
+            transition: nil,
+            eventProgress: 1,
+            strongBeatIndices: [0],
+            secondaryAccentIndices: [2]
+        )
+        let next = try XCTUnwrap(lifecycle.record(
+            beat: 1,
+            subdivision: 0,
+            cycle: 0,
+            beats: 4
+        ))
+        let target = BeatPolygonPresentationModel.edgePresentations(
+            placements: lifecycle.visibleEdgePlacements,
+            transition: next,
+            eventProgress: 1,
+            strongBeatIndices: [0],
+            secondaryAccentIndices: [2]
+        )
+        let resumedStart = BeatPolygonPresentationModel.resumePresentations(
+            from: frozen,
+            toward: target,
+            beatCount: 4,
+            eventProgress: 0
+        )
+        XCTAssertEqual(resumedStart.first, frozen.first)
+        XCTAssertEqual(resumedStart.count, 2)
+        XCTAssertEqual(resumedStart[1].drawProgress, 0)
+        XCTAssertEqual(
+            BeatPolygonPresentationModel.resumePresentations(
+                from: frozen,
+                toward: target,
+                beatCount: 4,
+                eventProgress: BeatPolygonPresentationModel.rotationCompletionFraction
+            ),
+            target
+        )
+    }
+
+    func testFiveBeatTwoPlusThreeEdgeAccentsFollowStableBeatIdentity() throws {
+        var preset = MetronomePreset.standard
+        preset.beats = 5
+        preset.grouping = "2+3"
+        var lifecycle = completedLifecycle(beats: 5)
+
+        let stable = BeatPolygonPresentationModel.edgePresentations(
+            placements: lifecycle.visibleEdgePlacements,
+            transition: nil,
+            eventProgress: 1,
+            strongBeatIndices: preset.strongBeatIndices,
+            secondaryAccentIndices: preset.secondaryAccentIndices
+        )
+        XCTAssertEqual(
+            stable.map(\.accentLevel),
+            [.strong, .weak, .secondary, .weak, .weak]
+        )
+        XCTAssertEqual(stable.map(\.opacity), [0.96, 0.34, 0.68, 0.34, 0.34])
+        XCTAssertEqual(stable.map(\.lineWidth), [3.2, 3.2, 3.2, 3.2, 3.2])
+        XCTAssertGreaterThan(stable[0].opacity, stable[2].opacity)
+        XCTAssertGreaterThan(stable[2].opacity, stable[1].opacity)
+        XCTAssertEqual(Set(stable.map(\.lineWidth)).count, 1)
+        XCTAssertTrue(stable.allSatisfy { $0.drawProgress == 1 })
+
+        let wrap = try XCTUnwrap(lifecycle.record(
+            beat: 0,
+            subdivision: 0,
+            cycle: 1,
+            beats: 5,
+            pulsesPerBeat: 4
+        ))
+        let rotating = BeatPolygonPresentationModel.edgePresentations(
+            placements: lifecycle.visibleEdgePlacements,
+            transition: wrap,
+            eventProgress: (
+                BeatPolygonPresentationModel.rotationStartFraction
+                    + BeatPolygonPresentationModel.rotationCompletionFraction
+            ) / 2,
+            strongBeatIndices: preset.strongBeatIndices,
+            secondaryAccentIndices: preset.secondaryAccentIndices
+        )
+        XCTAssertEqual(rotating[0].slot, 4.5, accuracy: 0.000_001)
+        XCTAssertEqual(rotating.map(\.accentLevel), stable.map(\.accentLevel))
+        XCTAssertEqual(rotating.map(\.opacity), stable.map(\.opacity))
+        XCTAssertEqual(rotating.map(\.lineWidth), stable.map(\.lineWidth))
+        XCTAssertTrue(rotating.allSatisfy { $0.drawProgress == 1 })
+
+        lifecycle.record(
+            beat: 1,
+            subdivision: 0,
+            cycle: 1,
+            beats: 5,
+            pulsesPerBeat: 4
+        )
+        let slotsBeforeResync = lifecycle.visibleEdgeIndices
+        lifecycle.resetScheduleTopology(beats: 5, isPlaying: true)
+        let resync = try XCTUnwrap(lifecycle.record(
+            beat: 0,
+            subdivision: 0,
+            cycle: 0,
+            beats: 5,
+            pulsesPerBeat: 2
+        ))
+        let rebound = BeatPolygonPresentationModel.edgePresentations(
+            placements: lifecycle.visibleEdgePlacements,
+            transition: resync,
+            eventProgress: 0.5,
+            strongBeatIndices: preset.strongBeatIndices,
+            secondaryAccentIndices: preset.secondaryAccentIndices
+        )
+        XCTAssertEqual(lifecycle.visibleEdgeIndices, slotsBeforeResync)
+        XCTAssertTrue(resync.rotations.isEmpty)
+        XCTAssertEqual(
+            rebound.first(where: { $0.slot == 0 })?.beatIdentity,
+            0
+        )
+        XCTAssertEqual(
+            rebound.first(where: { $0.slot == 0 })?.accentLevel,
+            .strong
+        )
+        XCTAssertEqual(
+            rebound.first(where: { $0.beatIdentity == 2 })?.accentLevel,
+            .secondary
+        )
+        XCTAssertTrue(rebound.filter { $0.beatIdentity != 0 && $0.beatIdentity != 2 }
+            .allSatisfy { $0.accentLevel == .weak })
+    }
+
+    func testNextCycleKeepsCompletePolygonAndRotatesEveryEdgeClockwise() throws {
         var lifecycle = completedLifecycle(beats: 5)
         let previousRevision = lifecycle.geometryRevision
 
-        let reset = try XCTUnwrap(lifecycle.record(
+        let advance = try XCTUnwrap(lifecycle.record(
             beat: 0,
             subdivision: 0,
             cycle: 1,
@@ -701,46 +1499,89 @@ final class V52VisualLifecycleTests: XCTestCase {
             pulsesPerBeat: 4
         ))
 
-        XCTAssertEqual(reset.kind, .measureReset)
-        XCTAssertEqual(reset.previousPlacements.count, 5)
+        XCTAssertEqual(advance.kind, .beatAdvance)
+        XCTAssertEqual(advance.previousPlacements.count, 5)
         XCTAssertEqual(
-            reset.placements,
-            [BeatVisualEdgePlacement(generationIndex: 0, slotIndex: 0)]
+            advance.placements,
+            [
+                BeatVisualEdgePlacement(generationIndex: 0, slotIndex: 0),
+                BeatVisualEdgePlacement(generationIndex: 1, slotIndex: 4),
+                BeatVisualEdgePlacement(generationIndex: 2, slotIndex: 3),
+                BeatVisualEdgePlacement(generationIndex: 3, slotIndex: 2),
+                BeatVisualEdgePlacement(generationIndex: 4, slotIndex: 1)
+            ]
         )
-        XCTAssertEqual(reset.rotations, [])
-        XCTAssertEqual(reset.insertedPlacements, reset.placements)
+        XCTAssertEqual(advance.rotations.count, 5)
+        XCTAssertEqual(
+            advance.rotations.first,
+            BeatVisualEdgeRotation(
+                generationIndex: 0,
+                fromSlotIndex: 4,
+                toSlotIndex: 5
+            )
+        )
+        XCTAssertTrue(advance.rotations.allSatisfy {
+            $0.toSlotIndex == $0.fromSlotIndex + 1
+        })
+        XCTAssertTrue(advance.insertedPlacements.isEmpty)
         XCTAssertEqual(lifecycle.geometryRevision, previousRevision + 1)
         XCTAssertEqual(lifecycle.currentMeasureCycle, 1)
-        XCTAssertEqual(lifecycle.phase, .building)
-        XCTAssertEqual(lifecycle.visibleEdgeIndices, [0])
+        XCTAssertEqual(lifecycle.phase, .orbiting)
+        XCTAssertEqual(lifecycle.visibleEdgeIndices, [0, 4, 3, 2, 1])
+        XCTAssertTrue(lifecycle.hasEstablishedStructure)
     }
 
-    func testSubdivisionAtNewCycleClearsOldMeasureButNeverAddsAnEdge() throws {
+    func testClosedPolygonNeverRebuildsAcrossLaterCycles() throws {
+        let beats = 5
+        var lifecycle = completedLifecycle(beats: beats)
+
+        for cycle in 1...4 {
+            for beat in 0..<beats {
+                let transition = try XCTUnwrap(lifecycle.record(
+                    beat: beat,
+                    subdivision: 0,
+                    cycle: cycle,
+                    beats: beats,
+                    pulsesPerBeat: 4
+                ))
+                XCTAssertEqual(lifecycle.builtEdgeCount, beats)
+                XCTAssertEqual(lifecycle.phase, .orbiting)
+                XCTAssertTrue(transition.insertedPlacements.isEmpty)
+                XCTAssertEqual(transition.rotations.count, beats)
+                XCTAssertTrue(transition.rotations.allSatisfy {
+                    $0.toSlotIndex == $0.fromSlotIndex + 1
+                })
+            }
+        }
+    }
+
+    func testSubdivisionAtNewCyclePreservesCompletePolygonAndGeometryRevision() {
         var lifecycle = completedLifecycle(beats: 4)
-        let reset = try XCTUnwrap(lifecycle.record(
+        let placements = lifecycle.visibleEdgePlacements
+        let revision = lifecycle.geometryRevision
+        let transition = lifecycle.record(
             beat: 0,
             subdivision: 1,
             cycle: 1,
             beats: 4,
             pulsesPerBeat: 4
-        ))
+        )
 
-        XCTAssertEqual(reset.kind, .measureReset)
-        XCTAssertTrue(reset.placements.isEmpty)
-        XCTAssertTrue(reset.insertedPlacements.isEmpty)
-        XCTAssertEqual(lifecycle.phase, .origin)
-        XCTAssertEqual(lifecycle.visibleEdgeIndices, [])
+        XCTAssertNil(transition)
+        XCTAssertEqual(lifecycle.visibleEdgePlacements, placements)
+        XCTAssertEqual(lifecycle.geometryRevision, revision)
+        XCTAssertEqual(lifecycle.phase, .orbiting)
         XCTAssertEqual(lifecycle.currentBeatIndex, 0)
     }
 
     func testMissingMainBeatCallbackRecoversAddressDerivedGeometry() throws {
         var lifecycle = BeatVisualLifecycle(beats: 7)
-        lifecycle.record(beat: 0, subdivision: 0, cycle: 4, beats: 7)
+        lifecycle.record(beat: 0, subdivision: 0, cycle: 0, beats: 7)
 
         let recovery = try XCTUnwrap(lifecycle.record(
             beat: 3,
             subdivision: 0,
-            cycle: 4,
+            cycle: 0,
             beats: 7
         ))
 
@@ -846,7 +1687,7 @@ final class V52VisualLifecycleTests: XCTestCase {
         lifecycle.record(
             beat: 0,
             subdivision: 0,
-            cycle: 12,
+            cycle: 0,
             beats: 4,
             pulsesPerBeat: 4
         )
@@ -857,7 +1698,7 @@ final class V52VisualLifecycleTests: XCTestCase {
             lifecycle.record(
                 beat: 0,
                 subdivision: subdivision,
-                cycle: 12,
+                cycle: 0,
                 beats: 4,
                 pulsesPerBeat: 4
             )
@@ -878,11 +1719,11 @@ final class V52VisualLifecycleTests: XCTestCase {
         lifecycle.record(
             beat: 1,
             subdivision: 0,
-            cycle: 12,
+            cycle: 0,
             beats: 4,
             pulsesPerBeat: 4
         )
-        XCTAssertEqual(lifecycle.currentMeasureCycle, 12)
+        XCTAssertEqual(lifecycle.currentMeasureCycle, 0)
         XCTAssertEqual(lifecycle.currentBeatIndex, 1)
         XCTAssertEqual(lifecycle.visibleEdgeIndices, [1, 0])
         XCTAssertEqual(lifecycle.geometryRevision, firstRevision + 1)
@@ -945,19 +1786,17 @@ final class V52VisualLifecycleTests: XCTestCase {
 
     func testStoppingDuringBuildDismantlesOnlyConstructedEdges() {
         var lifecycle = BeatVisualLifecycle(beats: 6)
-        lifecycle.record(beat: 2, subdivision: 0, cycle: 4, beats: 6)
-        lifecycle.record(beat: 3, subdivision: 0, cycle: 4, beats: 6)
-        lifecycle.record(beat: 4, subdivision: 1, cycle: 4, beats: 6)
-        XCTAssertEqual(lifecycle.visibleEdgeIndices, [3, 2, 1, 0])
+        lifecycle.record(beat: 0, subdivision: 0, cycle: 0, beats: 6)
+        lifecycle.record(beat: 1, subdivision: 0, cycle: 0, beats: 6)
+        lifecycle.record(beat: 1, subdivision: 1, cycle: 0, beats: 6)
+        XCTAssertEqual(lifecycle.visibleEdgeIndices, [1, 0])
 
         lifecycle.beginFinishing()
-        XCTAssertEqual(lifecycle.dismantlingOrder, [0, 1, 2, 3])
+        XCTAssertEqual(lifecycle.dismantlingOrder, [0, 1])
         lifecycle.completeCenterReturn()
 
         XCTAssertEqual(lifecycle.removeNextDismantlingEdge(), 0)
         XCTAssertEqual(lifecycle.removeNextDismantlingEdge(), 1)
-        XCTAssertEqual(lifecycle.removeNextDismantlingEdge(), 2)
-        XCTAssertEqual(lifecycle.removeNextDismantlingEdge(), 3)
         XCTAssertEqual(lifecycle.phase, .settled)
         XCTAssertNil(lifecycle.removeNextDismantlingEdge())
     }
@@ -988,6 +1827,195 @@ final class V52VisualLifecycleTests: XCTestCase {
         XCTAssertEqual(reducedMotion.phase, .settled)
     }
 
+    func testCollisionStrengthHierarchy() {
+        let duration = 0.1
+        let strong = BeatCollisionVisualModel.sample(
+            for: .strong,
+            age: 0,
+            duration: duration
+        )
+        let secondary = BeatCollisionVisualModel.sample(
+            for: .secondary,
+            age: 0,
+            duration: duration
+        )
+        let weak = BeatCollisionVisualModel.sample(
+            for: .weak,
+            age: 0,
+            duration: duration
+        )
+        let subdivision = BeatCollisionVisualModel.sample(
+            for: .subdivision,
+            age: 0,
+            duration: duration
+        )
+
+        XCTAssertEqual(strong.edgeSpread, 0.08, accuracy: 0.000_001)
+        XCTAssertEqual(secondary.edgeSpread, 0.08, accuracy: 0.000_001)
+        XCTAssertEqual(weak.edgeSpread, 0.08, accuracy: 0.000_001)
+        XCTAssertEqual(subdivision.edgeSpread, 0.08, accuracy: 0.000_001)
+        XCTAssertGreaterThan(strong.edgeOpacity, secondary.edgeOpacity)
+        XCTAssertGreaterThan(secondary.edgeOpacity, weak.edgeOpacity)
+        XCTAssertGreaterThan(weak.edgeOpacity, subdivision.edgeOpacity)
+        XCTAssertGreaterThan(strong.edgeLineWidthBoost, secondary.edgeLineWidthBoost)
+        XCTAssertGreaterThan(secondary.edgeLineWidthBoost, weak.edgeLineWidthBoost)
+        XCTAssertEqual(
+            BeatCollisionVisualModel.sample(
+                for: .strong,
+                age: duration,
+                duration: duration
+            ),
+            .empty
+        )
+    }
+
+    func testInitialCollisionStartsOnlyWhenTheBallActuallyLands() {
+        let interval = 0.2
+        let impact = interval * BeatBounceMotionModel.initialImpactFraction
+        let before = BeatCollisionVisualModel.collisionAge(
+            eventAge: impact - 0.001,
+            eventInterval: interval,
+            startsFromOrigin: true
+        )
+        let atImpact = BeatCollisionVisualModel.collisionAge(
+            eventAge: impact,
+            eventInterval: interval,
+            startsFromOrigin: true
+        )
+        let ordinary = BeatCollisionVisualModel.collisionAge(
+            eventAge: 0,
+            eventInterval: interval,
+            startsFromOrigin: false
+        )
+
+        XCTAssertEqual(atImpact, 0, accuracy: 0.000_001)
+        XCTAssertEqual(ordinary, 0, accuracy: 0.000_001)
+        XCTAssertEqual(
+            BeatCollisionVisualModel.sample(
+                for: .strong,
+                age: before,
+                duration: 0.04
+            ),
+            .empty
+        )
+        XCTAssertNotEqual(
+            BeatCollisionVisualModel.sample(
+                for: .strong,
+                age: atImpact,
+                duration: 0.04
+            ),
+            .empty
+        )
+    }
+
+    func testCollisionFinishesBeforePersistentRotationBegins() {
+        for interval in [1.0 / 48.0, 0.06, 0.125, 0.5] {
+            let style = BeatPulseVisualModel.style(
+                for: .strong,
+                eventInterval: interval
+            )
+            let ordinary = BeatCollisionVisualModel.effectDuration(
+                styleDuration: style.duration,
+                eventInterval: interval,
+                startsFromOrigin: false
+            )
+            let initial = BeatCollisionVisualModel.effectDuration(
+                styleDuration: style.duration,
+                eventInterval: interval,
+                startsFromOrigin: true
+            )
+            XCTAssertLessThanOrEqual(
+                ordinary,
+                interval * BeatPolygonPresentationModel.rotationStartFraction
+            )
+            XCTAssertLessThanOrEqual(
+                BeatBounceMotionModel.initialImpactFraction + initial / interval,
+                0.86 + 0.000_001
+            )
+        }
+    }
+
+    func testReducedMotionAndDimFlashingLightsRestrainCollision() {
+        let ordinary = BeatCollisionVisualModel.sample(
+            for: .strong,
+            age: 0.02,
+            duration: 0.1
+        )
+        let reduced = BeatCollisionVisualModel.sample(
+            for: .strong,
+            age: 0.02,
+            duration: 0.1,
+            reduceMotion: true
+        )
+        let dimmed = BeatCollisionVisualModel.sample(
+            for: .strong,
+            age: 0.02,
+            duration: 0.1,
+            dimFlashingLights: true
+        )
+        let resumeSuppressed = BeatCollisionVisualModel.sample(
+            for: .strong,
+            age: 0,
+            duration: 0.1,
+            suppressTransientFeedback: true
+        )
+
+        XCTAssertEqual(resumeSuppressed, .empty)
+        XCTAssertEqual(reduced.edgeSpread, 0.62, accuracy: 0.000_001)
+        XCTAssertEqual(
+            dimmed.edgeOpacity,
+            ordinary.edgeOpacity * 0.55,
+            accuracy: 0.000_001
+        )
+    }
+
+    func testContactLineWidthUsesTheActualHorizontalEdge() {
+        let weakContact = BeatEdgePresentation(
+            generationIndex: 0,
+            beatIdentity: 1,
+            slot: 0,
+            drawProgress: 1,
+            accentLevel: .weak,
+            opacity: 0.34,
+            lineWidth: 2.4
+        )
+        let strongAway = BeatEdgePresentation(
+            generationIndex: 1,
+            beatIdentity: 0,
+            slot: 1,
+            drawProgress: 1,
+            accentLevel: .strong,
+            opacity: 0.96,
+            lineWidth: 3.6
+        )
+        XCTAssertEqual(
+            BeatPolygonPresentationModel.contactLineWidth(
+                presentations: [strongAway, weakContact],
+                beatCount: 5
+            ),
+            2.4,
+            accuracy: 0.000_001
+        )
+
+        let wrappedContact = BeatEdgePresentation(
+            generationIndex: 0,
+            beatIdentity: 1,
+            slot: 5,
+            drawProgress: 1,
+            accentLevel: .weak,
+            opacity: 0.34,
+            lineWidth: 2.4
+        )
+        XCTAssertEqual(
+            BeatPolygonPresentationModel.contactLineWidth(
+                presentations: [strongAway, wrappedContact],
+                beatCount: 5
+            ),
+            2.4,
+            accuracy: 0.000_001
+        )
+    }
+
     func testGlanceStatusRemainsFinishingDuringDismantling() {
         var lifecycle = completedLifecycle(beats: 4)
         lifecycle.beginFinishing()
@@ -1015,4 +2043,24 @@ final class V52VisualLifecycleTests: XCTestCase {
         }
         return lifecycle
     }
+
+    private func contactPresentation(
+        in presentations: [BeatEdgePresentation],
+        beatCount: Int
+    ) -> BeatEdgePresentation? {
+        let period = Double(max(1, beatCount))
+        return presentations
+            .filter { $0.drawProgress > 0.5 }
+            .min { lhs, rhs in
+                contactDistance(lhs.slot, period: period)
+                    < contactDistance(rhs.slot, period: period)
+            }
+    }
+
+    private func contactDistance(_ slot: Double, period: Double) -> Double {
+        let remainder = slot.truncatingRemainder(dividingBy: period)
+        let normalized = remainder >= 0 ? remainder : remainder + period
+        return min(normalized, period - normalized)
+    }
+
 }

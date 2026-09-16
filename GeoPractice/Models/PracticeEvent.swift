@@ -66,6 +66,13 @@ struct PracticeAttemptCommitResult {
 @Model
 final class PracticeEvent {
     @Attribute(.unique) var id: UUID
+    /// Parent song identity. Optional so stores created before the song
+    /// library existed migrate additively; `PracticeLibraryStore.bootstrap()`
+    /// assigns every legacy event without replacing its stable event UUID.
+    var songID: UUID?
+    /// Stable ordering inside the parent song. Optional for the same additive
+    /// migration reason as `songID`.
+    var sectionSortIndex: Int?
     var name: String
     var leftCount: Int
     var rightCount: Int
@@ -85,6 +92,8 @@ final class PracticeEvent {
 
     init(
         id: UUID = UUID(),
+        songID: UUID? = nil,
+        sectionSortIndex: Int? = nil,
         name: String,
         leftCount: Int = 0,
         rightCount: Int = 0,
@@ -98,6 +107,8 @@ final class PracticeEvent {
     ) {
         let preset = preset.normalized
         self.id = id
+        self.songID = songID
+        self.sectionSortIndex = sectionSortIndex.map { max(0, $0) }
         self.name = name
         self.leftCount = max(0, leftCount)
         self.rightCount = max(0, rightCount)

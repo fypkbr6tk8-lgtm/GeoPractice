@@ -22,7 +22,7 @@
 		A0000000000000000000000D /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = B0000000000000000000000F /* PrivacyInfo.xcprivacy */; };
 		A0000000000000000000000E /* BeatVisualLifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000010 /* BeatVisualLifecycle.swift */; };
 		A0000000000000000000000F /* LiquidControlComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000011 /* LiquidControlComponents.swift */; };
-		A00000000000000000000010 /* BravuraText.otf in Resources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000012 /* BravuraText.otf */; };
+		A00000000000000000000010 /* Resources/Fonts/BravuraText.otf in Resources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000012 /* Resources/Fonts/BravuraText.otf */; };
 		A00000000000000000000011 /* PracticePreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000013 /* PracticePreferences.swift */; };
 		A00000000000000000000012 /* PracticeAttempt.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000015 /* PracticeAttempt.swift */; };
 		A00000000000000000000013 /* PracticeFolder.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000016 /* PracticeFolder.swift */; };
@@ -38,6 +38,11 @@
 		A0000000000000000000001D /* PrototypeRootMetronomeViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000020 /* PrototypeRootMetronomeViews.swift */; };
 		A0000000000000000000001E /* PrototypePracticeViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000021 /* PrototypePracticeViews.swift */; };
 		A0000000000000000000001F /* PrototypeStatisticsSettingsViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000022 /* PrototypeStatisticsSettingsViews.swift */; };
+		A00000000000000000000020 /* PracticeSong.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000023 /* PracticeSong.swift */; };
+		A00000000000000000000021 /* ICloudSyncService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000025 /* ICloudSyncService.swift */; };
+		A00000000000000000000022 /* ICloudSyncMergeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000026 /* ICloudSyncMergeTests.swift */; };
+		A00000000000000000000023 /* SubscriptionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000027 /* SubscriptionStore.swift */; };
+		A00000000000000000000024 /* SubscriptionStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000028 /* SubscriptionStoreTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -68,7 +73,7 @@
 		B0000000000000000000000F /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		B00000000000000000000010 /* BeatVisualLifecycle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BeatVisualLifecycle.swift; sourceTree = "<group>"; };
 		B00000000000000000000011 /* LiquidControlComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiquidControlComponents.swift; sourceTree = "<group>"; };
-		B00000000000000000000012 /* BravuraText.otf */ = {isa = PBXFileReference; lastKnownFileType = file; path = Resources/Fonts/BravuraText.otf; sourceTree = "<group>"; };
+		B00000000000000000000012 /* Resources/Fonts/BravuraText.otf */ = {isa = PBXFileReference; lastKnownFileType = file; path = Resources/Fonts/BravuraText.otf; sourceTree = "<group>"; };
 		B00000000000000000000013 /* PracticePreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PracticePreferences.swift; sourceTree = "<group>"; };
 		B00000000000000000000014 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		B00000000000000000000015 /* PracticeAttempt.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PracticeAttempt.swift; sourceTree = "<group>"; };
@@ -85,6 +90,12 @@
 		B00000000000000000000020 /* PrototypeRootMetronomeViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrototypeRootMetronomeViews.swift; sourceTree = "<group>"; };
 		B00000000000000000000021 /* PrototypePracticeViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrototypePracticeViews.swift; sourceTree = "<group>"; };
 		B00000000000000000000022 /* PrototypeStatisticsSettingsViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrototypeStatisticsSettingsViews.swift; sourceTree = "<group>"; };
+		B00000000000000000000023 /* PracticeSong.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PracticeSong.swift; sourceTree = "<group>"; };
+		B00000000000000000000024 /* GeoPractice.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = GeoPractice.entitlements; sourceTree = "<group>"; };
+		B00000000000000000000025 /* ICloudSyncService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ICloudSyncService.swift; sourceTree = "<group>"; };
+		B00000000000000000000026 /* ICloudSyncMergeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ICloudSyncMergeTests.swift; sourceTree = "<group>"; };
+		B00000000000000000000027 /* SubscriptionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubscriptionStore.swift; sourceTree = "<group>"; };
+		B00000000000000000000028 /* SubscriptionStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubscriptionStoreTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -119,9 +130,10 @@
 			children = (
 				B00000000000000000000001 /* GeoPracticeApp.swift */,
 				B00000000000000000000014 /* Info.plist */,
+				B00000000000000000000024 /* GeoPractice.entitlements */,
 				B0000000000000000000000D /* Assets.xcassets */,
 				B0000000000000000000000F /* PrivacyInfo.xcprivacy */,
-				B00000000000000000000012 /* BravuraText.otf */,
+				B00000000000000000000012 /* Resources/Fonts/BravuraText.otf */,
 				C00000000000000000000002 /* Models */,
 				C00000000000000000000003 /* Services */,
 				C00000000000000000000004 /* Views */,
@@ -139,6 +151,7 @@
 				B00000000000000000000016 /* PracticeFolder.swift */,
 				B00000000000000000000017 /* PracticeGoals.swift */,
 				B00000000000000000000013 /* PracticePreferences.swift */,
+				B00000000000000000000023 /* PracticeSong.swift */,
 				B0000000000000000000000E /* PracticeSession.swift */,
 			);
 			path = Models;
@@ -147,9 +160,11 @@
 		C00000000000000000000003 /* Services */ = {
 			isa = PBXGroup;
 			children = (
+				B00000000000000000000025 /* ICloudSyncService.swift */,
 				B00000000000000000000004 /* MetronomeEngine.swift */,
 				B0000000000000000000001C /* PracticeStatistics.swift */,
 				B00000000000000000000018 /* PracticeReportExporter.swift */,
+				B00000000000000000000027 /* SubscriptionStore.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -170,24 +185,15 @@
 			path = Views;
 			sourceTree = "<group>";
 		};
-		C00000000000000000000007 /* ProductPrototype */ = {
-			isa = PBXGroup;
-			children = (
-				B0000000000000000000001F /* PrototypeModels.swift */,
-				B00000000000000000000020 /* PrototypeRootMetronomeViews.swift */,
-				B00000000000000000000021 /* PrototypePracticeViews.swift */,
-				B00000000000000000000022 /* PrototypeStatisticsSettingsViews.swift */,
-			);
-			path = ProductPrototype;
-			sourceTree = "<group>";
-		};
 		C00000000000000000000005 /* GeoPracticeTests */ = {
 			isa = PBXGroup;
 			children = (
+				B00000000000000000000026 /* ICloudSyncMergeTests.swift */,
 				B0000000000000000000000A /* MetronomePresetTests.swift */,
 				B0000000000000000000001A /* PracticeFolderTests.swift */,
 				B0000000000000000000001B /* V52VisualLifecycleTests.swift */,
 				B0000000000000000000001E /* PracticeStatisticsTests.swift */,
+				B00000000000000000000028 /* SubscriptionStoreTests.swift */,
 			);
 			path = GeoPracticeTests;
 			sourceTree = "<group>";
@@ -199,6 +205,17 @@
 				B0000000000000000000000C /* GeoPracticeTests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		C00000000000000000000007 /* ProductPrototype */ = {
+			isa = PBXGroup;
+			children = (
+				B0000000000000000000001F /* PrototypeModels.swift */,
+				B00000000000000000000020 /* PrototypeRootMetronomeViews.swift */,
+				B00000000000000000000021 /* PrototypePracticeViews.swift */,
+				B00000000000000000000022 /* PrototypeStatisticsSettingsViews.swift */,
+			);
+			path = ProductPrototype;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -255,6 +272,14 @@
 				TargetAttributes = {
 					E00000000000000000000001 = {
 						CreatedOnToolsVersion = 26.6;
+						SystemCapabilities = {
+							com.apple.InAppPurchase = {
+								enabled = 1;
+							};
+							com.apple.iCloud = {
+								enabled = 1;
+							};
+						};
 					};
 					E00000000000000000000002 = {
 						CreatedOnToolsVersion = 26.6;
@@ -290,7 +315,7 @@
 			files = (
 				A0000000000000000000000B /* Assets.xcassets in Resources */,
 				A0000000000000000000000D /* PrivacyInfo.xcprivacy in Resources */,
-				A00000000000000000000010 /* BravuraText.otf in Resources */,
+				A00000000000000000000010 /* Resources/Fonts/BravuraText.otf in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -332,6 +357,9 @@
 				A0000000000000000000001D /* PrototypeRootMetronomeViews.swift in Sources */,
 				A0000000000000000000001E /* PrototypePracticeViews.swift in Sources */,
 				A0000000000000000000001F /* PrototypeStatisticsSettingsViews.swift in Sources */,
+				A00000000000000000000020 /* PracticeSong.swift in Sources */,
+				A00000000000000000000021 /* ICloudSyncService.swift in Sources */,
+				A00000000000000000000023 /* SubscriptionStore.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -343,6 +371,8 @@
 				A00000000000000000000017 /* PracticeFolderTests.swift in Sources */,
 				A00000000000000000000018 /* V52VisualLifecycleTests.swift in Sources */,
 				A0000000000000000000001B /* PracticeStatisticsTests.swift in Sources */,
+				A00000000000000000000022 /* ICloudSyncMergeTests.swift in Sources */,
+				A00000000000000000000024 /* SubscriptionStoreTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -474,8 +504,9 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = GeoPractice/GeoPractice.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5;
+				CURRENT_PROJECT_VERSION = 11;
 				DEVELOPMENT_TEAM = XKY44WW2XC;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = GeoPractice/Info.plist;
@@ -488,7 +519,7 @@
 				INFOPLIST_KEY_UIRequiresFullScreen = NO;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MARKETING_VERSION = 5.2;
+				MARKETING_VERSION = 5.3;
 				PRODUCT_BUNDLE_IDENTIFIER = com.kuoxiyu.GeoPractice;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -503,8 +534,9 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = GeoPractice/GeoPractice.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5;
+				CURRENT_PROJECT_VERSION = 11;
 				DEVELOPMENT_TEAM = XKY44WW2XC;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = GeoPractice/Info.plist;
@@ -517,7 +549,7 @@
 				INFOPLIST_KEY_UIRequiresFullScreen = NO;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MARKETING_VERSION = 5.2;
+				MARKETING_VERSION = 5.3;
 				PRODUCT_BUNDLE_IDENTIFIER = com.kuoxiyu.GeoPractice;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";

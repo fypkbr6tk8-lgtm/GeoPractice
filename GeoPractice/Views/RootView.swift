@@ -27,7 +27,12 @@ private struct PendingDailyGoalSetup: Identifiable {
 private struct PracticeSessionDraft: Codable {
     let session: PracticeSession
     let savedAt: Date
+    /// The one live metronome configuration for the whole session.
     let preset: MetronomePreset?
+    /// Last-used snapshots remain per hand for duration-only history and
+    /// statistics. They must never act as UI profiles when the user changes
+    /// the hand that receives counts.
+    let presetsByHand: [PracticeHand: MetronomePreset]?
 }
 
 @MainActor
@@ -36,27 +41,55 @@ final class PracticeSessionController: ObservableObject {
 
     @Published private(set) var session: PracticeSession
     private(set) var sessionPreset: MetronomePreset?
+    /// Historical last-used snapshots for summaries/statistics, not profiles
+    /// that may be loaded when the selected hand changes.
+    private(set) var sessionPresetsByHand: [PracticeHand: MetronomePreset]
     private let defaults: UserDefaults
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         var restored = PracticeSession()
         var restoredPreset: MetronomePreset?
+        var restoredPresetsByHand: [PracticeHand: MetronomePreset] = [:]
         var restoredSavedAt: Date?
         if let data = defaults.data(forKey: Self.draftKey),
            let draft = try? JSONDecoder().decode(PracticeSessionDraft.self, from: data) {
             restored = draft.session
             restoredPreset = draft.preset?.normalized
+            restoredPresetsByHand = (draft.presetsByHand ?? [:]).reduce(into: [:]) {
+                result, entry in
+                result[entry.key] = entry.value.normalized
+            }
+            if restoredPreset == nil {
+                // Drafts written before the scalar live preset was retained
+                // can still recover it from the currently selected hand.
+                restoredPreset = restoredPresetsByHand[restored.currentHand]
+            }
+            if restoredPresetsByHand[restored.currentHand] == nil,
+               let restoredPreset {
+                // Legacy drafts stored one preset, and a partially written
+                // newer draft can also be missing its active-hand entry. In
+                // both cases the scalar value represents the current hand.
+                restoredPresetsByHand[restored.currentHand] = restoredPreset
+            }
             restoredSavedAt = draft.savedAt
             switch restored.phase {
             case .running:
                 restored.pause(at: draft.savedAt)
-            case .idle, .paused, .finished:
+            case .finished:
+                // Upgrade a finished legacy draft before it can be confirmed
+                // into immutable history.
+                _ = restored.finish(
+                    at: draft.savedAt,
+                    presetsByHand: restoredPresetsByHand
+                )
+            case .idle, .paused:
                 break
             }
         }
         _session = Published(initialValue: restored)
         sessionPreset = restoredPreset
+        sessionPresetsByHand = restoredPresetsByHand
         if let restoredSavedAt {
             // Re-encode immediately so legacy drafts that had no sessionID
             // keep the decoder-generated ID across every later relaunch.
@@ -68,15 +101,19 @@ final class PracticeSessionController: ObservableObject {
         sourceEventID: UUID? = nil,
         preset: MetronomePreset,
         goalContext: PracticeGoalLaunchContext? = nil,
+        initialHand: PracticeHand = .both,
         at date: Date = .now
     ) {
         var next = PracticeSession()
         next.begin(
             sourceEventID: sourceEventID,
             goalContext: goalContext,
+            initialHand: initialHand,
             at: date
         )
-        sessionPreset = preset.normalized
+        let normalizedPreset = preset.normalized
+        sessionPreset = normalizedPreset
+        sessionPresetsByHand = [initialHand: normalizedPreset]
         commit(next, at: date)
     }
 
@@ -86,7 +123,9 @@ final class PracticeSessionController: ObservableObject {
             begin(preset: preset, at: date)
         case .paused:
             if sessionPreset == nil {
-                sessionPreset = preset.normalized
+                let normalizedPreset = preset.normalized
+                sessionPreset = normalizedPreset
+                sessionPresetsByHand[session.currentHand] = normalizedPreset
             }
             resume(at: date)
         case .running, .finished:
@@ -109,6 +148,13 @@ final class PracticeSessionController: ObservableObject {
     func switchHand(to hand: PracticeHand, at date: Date = .now) {
         var next = session
         next.switchHand(to: hand, at: date)
+        if next.currentHand == hand,
+           let sessionPreset {
+            // A hand selects where time/counts are recorded; it is not a
+            // metronome preset profile. Snapshot the unchanged live setting
+            // for history without replacing it with this hand's old value.
+            sessionPresetsByHand[hand] = sessionPreset
+        }
         commit(next, at: date)
     }
 
@@ -119,6 +165,11 @@ final class PracticeSessionController: ObservableObject {
     ) {
         var next = session
         next.recordCompletion(for: hand, preset: preset, at: date)
+        let normalizedPreset = preset.normalized
+        sessionPresetsByHand[hand] = normalizedPreset
+        if next.currentHand == hand {
+            sessionPreset = normalizedPreset
+        }
         commit(next, at: date)
     }
 
@@ -160,7 +211,10 @@ final class PracticeSessionController: ObservableObject {
 
     func finish(at date: Date = .now) -> PracticeSessionSummary? {
         var next = session
-        let summary = next.finish(at: date)
+        let summary = next.finish(
+            at: date,
+            presetsByHand: sessionPresetsByHand
+        )
         commit(next, at: date)
         return summary
     }
@@ -174,12 +228,18 @@ final class PracticeSessionController: ObservableObject {
     func reset() {
         session = PracticeSession()
         sessionPreset = nil
+        sessionPresetsByHand = [:]
         defaults.removeObject(forKey: Self.draftKey)
     }
 
-    func updatePreset(_ preset: MetronomePreset, at date: Date = .now) {
+    func updateLivePreset(
+        _ preset: MetronomePreset,
+        at date: Date = .now
+    ) {
         guard session.phase != .idle else { return }
-        sessionPreset = preset.normalized
+        let normalizedPreset = preset.normalized
+        sessionPreset = normalizedPreset
+        sessionPresetsByHand[session.currentHand] = normalizedPreset
         persist(session, at: date)
     }
 
@@ -200,7 +260,8 @@ final class PracticeSessionController: ObservableObject {
         let draft = PracticeSessionDraft(
             session: session,
             savedAt: date,
-            preset: sessionPreset
+            preset: sessionPreset,
+            presetsByHand: sessionPresetsByHand
         )
         guard let data = try? JSONEncoder().encode(draft) else { return }
         defaults.set(data, forKey: Self.draftKey)
@@ -214,6 +275,8 @@ struct RootView: View {
     private var continueAudioInBackground = true
     @AppStorage(PracticePreferenceKeys.keepScreenAwake)
     private var keepScreenAwake = false
+    @AppStorage(PracticePreferenceKeys.appearanceMode)
+    private var appearanceModeRaw = PracticeAppearanceMode.dark.rawValue
     @StateObject private var metronome = MetronomeEngine()
     @StateObject private var practiceSession = PracticeSessionController()
     @State private var selectedTab: RootTab = .practice
@@ -263,8 +326,8 @@ struct RootView: View {
                     Label("节拍器", systemImage: "metronome")
                 }
         }
-        .tint(.white)
-        .preferredColorScheme(.dark)
+        .tint(GeoTheme.controlAccent)
+        .preferredColorScheme(preferredColorScheme)
         .confirmationDialog(
             "当前练习尚未处理完",
             isPresented: Binding(
@@ -462,6 +525,17 @@ struct RootView: View {
             continueAudioInBackground: continueAudioInBackground,
             keepScreenAwake: keepScreenAwake
         )
+    }
+
+    private var preferredColorScheme: ColorScheme? {
+        switch PracticeAppearanceMode(rawValue: appearanceModeRaw) ?? .dark {
+        case .followSystem:
+            nil
+        case .light:
+            .light
+        case .dark:
+            .dark
+        }
     }
 
     private func handleScenePhaseChange(_ phase: ScenePhase, at date: Date) {

@@ -128,10 +128,10 @@ struct LiquidControlPanel<Content: View>: View {
     private var opaquePanel: some View {
         content
             .padding(contentPadding)
-            .background(Color(white: 0.075), in: panelShape)
+            .background(GeoTheme.panel, in: panelShape)
             .overlay {
                 panelShape
-                    .stroke(Color.white.opacity(0.16), lineWidth: 1)
+                    .stroke(GeoTheme.surfaceInk.opacity(0.16), lineWidth: 1)
                     .allowsHitTesting(false)
             }
     }
@@ -142,14 +142,14 @@ struct LiquidControlPanel<Content: View>: View {
             .background(.ultraThinMaterial, in: panelShape)
             .background {
                 panelShape
-                    .fill(Color.black.opacity(0.12))
+                    .fill(GeoTheme.background.opacity(0.12))
                     .allowsHitTesting(false)
             }
             .overlay {
                 panelShape
                     .fill(
                         LinearGradient(
-                            colors: [Color.white.opacity(0.075), Color.white.opacity(0.012)],
+                            colors: [GeoTheme.surfaceInk.opacity(0.075), GeoTheme.surfaceInk.opacity(0.012)],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         )
@@ -158,7 +158,7 @@ struct LiquidControlPanel<Content: View>: View {
             }
             .overlay {
                 panelShape
-                    .stroke(Color.white.opacity(0.15), lineWidth: 1)
+                    .stroke(GeoTheme.surfaceInk.opacity(0.15), lineWidth: 1)
                     .allowsHitTesting(false)
             }
     }
@@ -168,14 +168,14 @@ struct LiquidControlPanel<Content: View>: View {
     private var liquidGlassPanel: some View {
         content
             .padding(contentPadding)
-            .background(Color.black.opacity(0.18), in: panelShape)
+            .background(GeoTheme.background.opacity(0.18), in: panelShape)
             .glassEffect(
-                .regular.tint(Color.white.opacity(0.025)),
+                .regular.tint(GeoTheme.surfaceInk.opacity(0.025)),
                 in: panelShape
             )
             .overlay {
                 panelShape
-                    .stroke(Color.white.opacity(0.18), lineWidth: 0.9)
+                    .stroke(GeoTheme.surfaceInk.opacity(0.18), lineWidth: 0.9)
                     .allowsHitTesting(false)
             }
     }
@@ -188,9 +188,9 @@ struct LiquidControlPanel<Content: View>: View {
 
 /// A horizontally scrubbable selector for a small set of discrete values.
 ///
-/// During a drag the nearest option is previewed locally while one continuous
-/// glass cursor follows the finger. Carousel content scrolls beneath that
-/// cursor, and every style commits to the model only when the gesture ends.
+/// During a drag the nearest option is previewed locally while one solid,
+/// high-contrast cursor follows the finger. Carousel content scrolls beneath
+/// that cursor, and every style commits only when the gesture ends.
 struct LiquidScrubSelector<Option: Hashable, Label: View>: View {
     let options: [Option]
     let selection: Option
@@ -332,10 +332,10 @@ struct LiquidScrubSelector<Option: Hashable, Label: View>: View {
     private func opaqueSurface(size: CGSize) -> some View {
         ZStack(alignment: .leading) {
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .fill(Color(white: 0.10))
+                .fill(GeoTheme.panelRaised)
                 .overlay {
                     RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                        .stroke(Color.white.opacity(0.18), lineWidth: 1)
+                        .stroke(GeoTheme.surfaceInk.opacity(0.18), lineWidth: 1)
                 }
             opaqueCursor(size: size)
             labelsLayer(size: size)
@@ -344,10 +344,10 @@ struct LiquidScrubSelector<Option: Hashable, Label: View>: View {
 
     private func opaqueCursor(size: CGSize) -> some View {
         Capsule(style: .continuous)
-            .fill(Color.white.opacity(0.16))
+            .fill(GeoTheme.surfaceInk.opacity(0.16))
             .overlay {
                 Capsule(style: .continuous)
-                    .stroke(Color.white.opacity(0.24), lineWidth: 1)
+                    .stroke(GeoTheme.surfaceInk.opacity(0.24), lineWidth: 1)
             }
             .frame(width: cursorWidth(for: size), height: cursorHeight(for: size))
             .scaleEffect(
@@ -361,24 +361,24 @@ struct LiquidScrubSelector<Option: Hashable, Label: View>: View {
     private func materialSurface(size: CGSize) -> some View {
         ZStack(alignment: .leading) {
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .fill(Color.white.opacity(0.025))
+                .fill(GeoTheme.surfaceInk.opacity(0.025))
                 .overlay {
                     RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                        .stroke(Color.white.opacity(0.075), lineWidth: 0.8)
+                        .stroke(GeoTheme.surfaceInk.opacity(0.075), lineWidth: 0.8)
                         .allowsHitTesting(false)
                 }
 
             Capsule(style: .continuous)
                 .fill(
                     LinearGradient(
-                        colors: [Color.white.opacity(0.18), Color.white.opacity(0.08)],
+                        colors: [GeoTheme.surfaceInk.opacity(0.18), GeoTheme.surfaceInk.opacity(0.08)],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
                     )
                 )
                 .overlay {
                     Capsule(style: .continuous)
-                        .stroke(Color.white.opacity(0.23), lineWidth: 0.8)
+                        .stroke(GeoTheme.surfaceInk.opacity(0.23), lineWidth: 0.8)
                 }
                 .shadow(color: .black.opacity(0.10), radius: 5, y: 2)
                 .frame(width: cursorWidth(for: size), height: cursorHeight(for: size))
@@ -398,23 +398,23 @@ struct LiquidScrubSelector<Option: Hashable, Label: View>: View {
     private func liquidGlassSurface(size: CGSize) -> some View {
         ZStack(alignment: .leading) {
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .fill(Color.white.opacity(0.025))
+                .fill(GeoTheme.surfaceInk.opacity(0.025))
                 .overlay {
                     RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                        .stroke(Color.white.opacity(0.07), lineWidth: 0.8)
+                        .stroke(GeoTheme.surfaceInk.opacity(0.07), lineWidth: 0.8)
                 }
 
             Capsule(style: .continuous)
                 .fill(
                     LinearGradient(
-                        colors: [Color.white.opacity(0.20), Color.white.opacity(0.09)],
+                        colors: [GeoTheme.surfaceInk.opacity(0.20), GeoTheme.surfaceInk.opacity(0.09)],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
                     )
                 )
                 .overlay {
                     Capsule(style: .continuous)
-                        .stroke(Color.white.opacity(0.28), lineWidth: 0.8)
+                        .stroke(GeoTheme.surfaceInk.opacity(0.28), lineWidth: 0.8)
                 }
                 .frame(width: cursorWidth(for: size), height: cursorHeight(for: size))
                 .scaleEffect(
@@ -449,7 +449,7 @@ struct LiquidScrubSelector<Option: Hashable, Label: View>: View {
                     .minimumScaleFactor(0.72)
                     .fontWeight(index == displayedIndex ? .semibold : .medium)
                     .foregroundStyle(
-                        Color.white.opacity(index == displayedIndex ? 0.96 : 0.50)
+                        GeoTheme.text.opacity(index == displayedIndex ? 0.96 : 0.50)
                     )
                     .scaleEffect(index == displayedIndex ? 1.035 : 1)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -468,7 +468,7 @@ struct LiquidScrubSelector<Option: Hashable, Label: View>: View {
                 Image(systemName: "chevron.left")
                     .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(
-                        Color.white.opacity(displayedIndex > 0 ? 0.34 : 0.10)
+                        GeoTheme.text.opacity(displayedIndex > 0 ? 0.34 : 0.10)
                     )
                     .frame(width: 34)
                     .frame(maxHeight: .infinity)
@@ -477,7 +477,7 @@ struct LiquidScrubSelector<Option: Hashable, Label: View>: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.72)
                     .fontWeight(.semibold)
-                    .foregroundStyle(Color.white.opacity(0.96))
+                    .foregroundStyle(GeoTheme.text.opacity(0.96))
                     .scaleEffect(1.035)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .animation(compactLabelAnimation, value: displayedIndex)
@@ -485,7 +485,7 @@ struct LiquidScrubSelector<Option: Hashable, Label: View>: View {
                 Image(systemName: "chevron.right")
                     .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(
-                        Color.white.opacity(displayedIndex < options.count - 1 ? 0.34 : 0.10)
+                        GeoTheme.text.opacity(displayedIndex < options.count - 1 ? 0.34 : 0.10)
                     )
                     .frame(width: 34)
                     .frame(maxHeight: .infinity)
@@ -505,7 +505,7 @@ struct LiquidScrubSelector<Option: Hashable, Label: View>: View {
                         .minimumScaleFactor(0.72)
                         .fontWeight(index == displayedIndex ? .semibold : .medium)
                         .foregroundStyle(
-                            Color.white.opacity(index == displayedIndex ? 0.96 : 0.52)
+                            GeoTheme.text.opacity(index == displayedIndex ? 0.96 : 0.52)
                         )
                         .scaleEffect(index == displayedIndex ? 1.035 : 0.92)
                         .frame(width: slotWidth)

@@ -138,7 +138,8 @@ final class PracticeFolderTests: XCTestCase {
         ])
         let configuration = ModelConfiguration(
             schema: schema,
-            isStoredInMemoryOnly: true
+            isStoredInMemoryOnly: true,
+            cloudKitDatabase: .none
         )
         let container = try ModelContainer(
             for: schema,
@@ -213,7 +214,8 @@ final class PracticeFolderTests: XCTestCase {
         ])
         let configuration = ModelConfiguration(
             schema: schema,
-            isStoredInMemoryOnly: true
+            isStoredInMemoryOnly: true,
+            cloudKitDatabase: .none
         )
         let container = try ModelContainer(
             for: schema,
